@@ -1,0 +1,5 @@
+.env
+__pycache__/
+memory.json
+BOT key.txt
+OpenAI key.txt

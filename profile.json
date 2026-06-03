@@ -1,0 +1,86 @@
+{
+  "name": "Валентин Барановский",
+
+  "target_salary_min": 330000,
+  "target_salary_max": 400000,
+
+  "target_roles": [
+    "Project Manager",
+    "Senior Project Manager",
+    "IT Project Manager",
+    "AI Project Manager",
+    "Program Manager",
+    "Delivery Manager"
+  ],
+
+  "preferred_format": [
+    "remote",
+    "hybrid"
+  ],
+
+  "target_companies": [
+    "Яндекс",
+    "Т-Банк",
+    "VK",
+    "Авито",
+    "Ozon",
+    "Сбер",
+    "Positive Technologies",
+    "Astra Linux"
+  ],
+
+  "target_domains": [
+    "AI",
+    "IT",
+    "Digital Transformation",
+    "Automation",
+    "Enterprise Systems"
+  ],
+
+  "experience_years": 9,
+
+  "current_role": "Руководитель проектов",
+
+  "industries": [
+    "Нефтегаз",
+    "Нефтехимия",
+    "Инжиниринг",
+    "ИТ"
+  ],
+
+  "project_budget": "150+ млн руб",
+
+  "team_size": "20-30 человек",
+
+  "english": "C1",
+
+  "methodologies": [
+    "PMBOK",
+    "Agile",
+    "Scrum",
+    "Kanban",
+    "Waterfall"
+  ],
+
+  "skills": [
+    "Project Management",
+    "Program Management",
+    "Stakeholder Management",
+    "Risk Management",
+    "Budget Management",
+    "Vendor Management",
+    "Roadmap Planning",
+    "Digital Transformation",
+    "AI Tools",
+    "Prompt Engineering"
+  ],
+
+  "strong_points": [
+    "Управление крупными программами",
+    "CAPEX проекты",
+    "ИТ трансформация",
+    "Работа с топ-менеджментом",
+    "Управление подрядчиками",
+    "Управление командами"
+  ]
+}
