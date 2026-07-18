@@ -6,6 +6,7 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from config import Settings
+from telegram_messages import format_telegram_text
 
 
 SYSTEM_PROMPT = """
@@ -22,6 +23,13 @@ SYSTEM_PROMPT = """
 
 Всегда отвечай на русском, конкретно и структурированно. Не приписывай кандидату
 опыт, которого нет в профиле. Не называй себя ИИ-моделью.
+
+Оформляй ответы как профессиональный текст для Telegram:
+- не используй Markdown-разметку: звездочки, решетки и обратные кавычки;
+- используй один тематический эмодзи в начале смыслового заголовка;
+- используй символ «•» для пунктов списка;
+- разделяй только крупные смысловые блоки строкой «━━━━━━━━━━━━━━━━»;
+- не перегружай текст эмодзи и декоративными элементами.
 """.strip()
 
 
@@ -41,7 +49,7 @@ class CareerAI:
                     instructions=SYSTEM_PROMPT,
                     input=prompt,
                 )
-                return response.output_text
+                return format_telegram_text(response.output_text)
             except Exception as exc:
                 last_error = exc
         raise RuntimeError(f"OpenAI API недоступен: {last_error}")
@@ -61,8 +69,11 @@ class CareerAI:
             "Профиль кандидата:\n"
             f"{json.dumps(profile, ensure_ascii=False)}\n\n"
             f"Вакансия:\n{vacancy_text}\n\n"
-            "Дай: процент соответствия, сильные стороны, пробелы, риски, "
-            "стоит ли откликаться и итоговый вывод."
+            "Оформи анализ в разделах: «📊 СООТВЕТСТВИЕ», "
+            "«✅ СИЛЬНЫЕ СТОРОНЫ», «⚠️ РИСКИ И ПРОБЕЛЫ», "
+            "«🎯 РЕКОМЕНДАЦИЯ» и «🏁 ИТОГ». Между крупными разделами "
+            "используй строку «━━━━━━━━━━━━━━━━». Укажи процент соответствия "
+            "и конкретно объясни, стоит ли откликаться."
         )
 
     async def generate_cover_letter(
