@@ -24,6 +24,7 @@ from gmail_source import GmailLinkedInSource
 from monitor import VacancyMonitor
 from ranking import VacancyRanker
 from telegram_source import TelegramChannelSource
+from telegram_messages import reply_text_safely
 from vacancy_manager import (
     VacancyRepository,
     configure_legacy_repository,
@@ -142,11 +143,11 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if context.user_data.pop("waiting_for_vacancy", False):
             answer = await analyze_vacancy(text, profile)
             save_vacancy(text)
-            await update.effective_message.reply_text(answer)
+            await reply_text_safely(update.effective_message, answer)
             return
         if context.user_data.pop("waiting_for_cover", False):
             answer = await generate_cover_letter(text, profile)
-            await update.effective_message.reply_text(answer)
+            await reply_text_safely(update.effective_message, answer)
             return
         if text == ANALYZE_BUTTON:
             context.user_data["waiting_for_vacancy"] = True
@@ -163,7 +164,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 if vacancies
                 else "Пока пусто"
             )
-            await update.effective_message.reply_text(message)
+            await reply_text_safely(update.effective_message, message)
             return
         if text == PROFILE_BUTTON:
             await update.effective_message.reply_text(
@@ -172,7 +173,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 "Формат: только удалённо"
             )
             return
-        await update.effective_message.reply_text(await ask_ai(text))
+        await reply_text_safely(update.effective_message, await ask_ai(text))
     except Exception:
         LOGGER.exception("Ошибка обработки сообщения")
         await update.effective_message.reply_text(
@@ -202,7 +203,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             repository.record_action(
                 vacancy_id, query.message.chat_id, "cover_generated", letter
             )
-            await query.message.reply_text(letter)
+            await reply_text_safely(query.message, letter)
         except Exception:
             LOGGER.exception("Не удалось создать письмо")
             await query.message.reply_text(
