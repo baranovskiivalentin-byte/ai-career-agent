@@ -2,7 +2,7 @@
   "name": "Валентин Барановский",
 
   "target_salary_min": 330000,
-  "target_salary_max": 400000,
+  "target_salary_max": 450000,
 
   "target_roles": [
     "Project Manager",
@@ -14,9 +14,57 @@
   ],
 
   "preferred_format": [
-    "remote",
-    "hybrid"
+    "remote"
   ],
+
+  "digest": {
+    "timezone": "Europe/Moscow",
+    "hour": 19,
+    "minute": 0,
+    "senior_it_slots": 5,
+    "enterprise_epc_slots": 5,
+    "minimum_score": 70,
+    "backfill_score": 75
+  },
+
+  "tracks": {
+    "senior_it": {
+      "title": "Senior IT / Delivery",
+      "roles": [
+        "Senior IT Project Manager",
+        "Delivery Manager",
+        "Program Manager",
+        "AI Project Manager"
+      ],
+      "keywords": [
+        "ERP",
+        "SAP",
+        "enterprise",
+        "delivery",
+        "цифровая трансформация",
+        "интеграция",
+        "миграция данных",
+        "релиз"
+      ]
+    },
+    "enterprise_epc": {
+      "title": "Enterprise / EPC",
+      "roles": [
+        "Руководитель проектов",
+        "Project Manager",
+        "Program Manager"
+      ],
+      "keywords": [
+        "EPC",
+        "CAPEX",
+        "инжиниринг",
+        "нефтегаз",
+        "подрядчик",
+        "WBS",
+        "управление рисками"
+      ]
+    }
+  },
 
   "target_companies": [
     "Яндекс",

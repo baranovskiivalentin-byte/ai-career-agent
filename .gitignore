@@ -1,5 +1,7 @@
 .env
 __pycache__/
+.pytest_cache/
+*.db
 memory.json
 BOT key.txt
 OpenAI key.txt
