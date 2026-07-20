@@ -31,12 +31,25 @@
 3. Добавьте `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` и
    включите `GMAIL_ENABLED=true`.
 
-## Telegram-каналы
+## Публичные Telegram-каналы без API ID
 
-1. Создайте отдельный Telegram-аккаунт, получите `api_id` и `api_hash` на
-   `my.telegram.org`, сформируйте Telethon StringSession.
-2. Добавьте секреты в Railway и включите `TELEGRAM_SOURCES_ENABLED=true`.
-3. Добавьте каналы командами `/source_add @channel` и проверьте `/sources`.
+Основной источник использует публичные страницы `https://t.me/s/<channel>` и не
+требует Telegram API-приложения или пользовательской сессии.
+
+1. Добавьте в Railway `TELEGRAM_WEB_ENABLED=true`.
+2. При необходимости переопределите список через `TELEGRAM_WEB_CHANNELS`, указав
+   имена через запятую. По умолчанию подключаются восемь проверенных каналов:
+   `forproducts`, `jobs_pm`, `careerstation_pm`, `remotegeekjob`, `remoteit`,
+   `evacuatejobs`, `it_vakansii_jobs`, `careerspace`.
+3. Первый запуск обрабатывает только публикации за последние 72 часа и не более
+   пяти подходящих вакансий с каждого канала. Значения настраиваются переменными
+   `TELEGRAM_WEB_LOOKBACK_HOURS` и `TELEGRAM_WEB_MAX_POSTS_PER_CHANNEL`.
+4. Проверьте список командой `/sources`, состояние — командой `/health`.
+
+Парсер пропускает резюме, публикации без целевой управленческой роли и вакансии
+без явно указанного удалённого формата. Сбой одного канала не останавливает сбор
+из остальных. MTProto-адаптер сохранён для будущего использования и включается
+отдельно через `TELEGRAM_SOURCES_ENABLED=true` после получения API ID.
 
 ## Команды
 

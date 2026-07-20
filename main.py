@@ -24,6 +24,7 @@ from gmail_source import GmailLinkedInSource
 from monitor import VacancyMonitor
 from ranking import VacancyRanker
 from telegram_source import TelegramChannelSource
+from telegram_web_source import TelegramWebSource
 from telegram_messages import reply_text_safely
 from vacancy_manager import (
     VacancyRepository,
@@ -83,6 +84,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"HH OAuth: {'настроен' if settings.hh_access_token or (settings.hh_client_id and settings.hh_client_secret) else 'не настроен'}",
         f"Gmail: {'включён' if settings.gmail_enabled else 'выключен'}",
         f"Telegram-каналы: {'включены' if settings.telegram_sources_enabled else 'выключены'}",
+        f"Telegram Web: {'включён' if settings.telegram_web_enabled else 'выключен'}",
     ]
     text.extend(f"⚠️ {warning}" for warning in warnings)
     await update.effective_message.reply_text("\n".join(text))
@@ -278,6 +280,12 @@ def build_application() -> Application:
     if imported:
         LOGGER.info("Импортировано старых вакансий: %s", imported)
     repository = VacancyRepository(database)
+    if settings.telegram_web_enabled and not database.get_cursor(
+        "telegram_web_defaults_seeded"
+    ):
+        for channel in settings.telegram_web_channels:
+            repository.add_source(channel)
+        database.set_cursor("telegram_web_defaults_seeded", "1")
     configure_legacy_repository(repository)
     configure_ai(settings)
     profile = load_profile()
@@ -285,6 +293,8 @@ def build_application() -> Application:
     optional_fetchers = []
     if settings.gmail_enabled:
         optional_fetchers.append(GmailLinkedInSource(settings).fetch_recent)
+    if settings.telegram_web_enabled:
+        optional_fetchers.append(TelegramWebSource(settings, repository).fetch_recent)
     monitor = VacancyMonitor(settings, repository, ranker, optional_fetchers)
     telegram_source = TelegramChannelSource(settings, repository)
 

@@ -22,6 +22,29 @@ def _int_env(name: str, default: int) -> int:
     return int(value) if value else default
 
 
+def _list_env(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return tuple(
+        item.strip().lstrip("@").lower()
+        for item in value.split(",")
+        if item.strip()
+    )
+
+
+DEFAULT_TELEGRAM_WEB_CHANNELS = (
+    "forproducts",
+    "jobs_pm",
+    "careerstation_pm",
+    "remotegeekjob",
+    "remoteit",
+    "evacuatejobs",
+    "it_vakansii_jobs",
+    "careerspace",
+)
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_token: str
@@ -50,6 +73,10 @@ class Settings:
     telegram_api_id: int | None
     telegram_api_hash: str | None
     telegram_session: str | None
+    telegram_web_enabled: bool
+    telegram_web_channels: tuple[str, ...]
+    telegram_web_lookback_hours: int
+    telegram_web_max_posts_per_channel: int
 
     @classmethod
     def from_env(cls, *, require_core: bool = True) -> "Settings":
@@ -110,6 +137,14 @@ class Settings:
             telegram_api_id=int(api_id) if api_id else None,
             telegram_api_hash=os.getenv("TELEGRAM_API_HASH"),
             telegram_session=os.getenv("TELEGRAM_SESSION"),
+            telegram_web_enabled=_bool_env("TELEGRAM_WEB_ENABLED", False),
+            telegram_web_channels=_list_env(
+                "TELEGRAM_WEB_CHANNELS", DEFAULT_TELEGRAM_WEB_CHANNELS
+            ),
+            telegram_web_lookback_hours=_int_env("TELEGRAM_WEB_LOOKBACK_HOURS", 72),
+            telegram_web_max_posts_per_channel=_int_env(
+                "TELEGRAM_WEB_MAX_POSTS_PER_CHANNEL", 5
+            ),
         )
 
     def optional_source_warnings(self) -> list[str]:
@@ -124,4 +159,6 @@ class Settings:
             warnings.append(
                 "Telegram-источники включены, но MTProto-переменные неполны"
             )
+        if self.telegram_web_enabled and not self.telegram_web_channels:
+            warnings.append("Telegram Web включён, но список каналов пуст")
         return warnings
