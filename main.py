@@ -47,9 +47,14 @@ ANALYZE_BUTTON = "📊 Анализ вакансии"
 COVER_BUTTON = "📝 Сопроводительное"
 LIST_BUTTON = "📂 Последние вакансии"
 PROFILE_BUTTON = "👤 Профиль"
+SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [[ANALYZE_BUTTON, COVER_BUTTON], [LIST_BUTTON, PROFILE_BUTTON]],
+    [
+        [ANALYZE_BUTTON, COVER_BUTTON],
+        [LIST_BUTTON, PROFILE_BUTTON],
+        [SEND_DIGEST_BUTTON],
+    ],
     resize_keyboard=True,
 )
 
@@ -75,7 +80,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = services(context)["settings"]
     db: Database = services(context)["database"]
+    repository: VacancyRepository = services(context)["repository"]
     chat_id = settings.telegram_chat_id or db.get_cursor("digest_chat_id")
+    telegram_web_sources = repository.list_sources()
     warnings = settings.optional_source_warnings()
     text = [
         "✅ Бот работает",
@@ -85,8 +92,8 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Теневой режим: {'включён' if settings.shadow_mode else 'выключен'}",
         f"HH OAuth: {'настроен' if settings.hh_access_token or (settings.hh_client_id and settings.hh_client_secret) else 'не настроен'}",
         f"Gmail: {'включён' if settings.gmail_enabled else 'выключен'}",
-        f"Telegram-каналы: {'включены' if settings.telegram_sources_enabled else 'выключены'}",
-        f"Telegram Web: {'включён' if settings.telegram_web_enabled else 'выключен'}",
+        f"Публичные Telegram-каналы: {'включены' if settings.telegram_web_enabled else 'выключены'} ({len(telegram_web_sources)})",
+        f"Telegram MTProto (резерв): {'включён' if settings.telegram_sources_enabled else 'выключен'}",
     ]
     text.extend(f"⚠️ {warning}" for warning in warnings)
     await update.effective_message.reply_text("\n".join(text))
@@ -144,6 +151,9 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (update.effective_message.text or "").strip()
     profile = services(context)["profile"]
     try:
+        if text == SEND_DIGEST_BUTTON:
+            await digest_command(update, context)
+            return
         if context.user_data.pop("waiting_for_vacancy", False):
             answer = await analyze_vacancy(text, profile)
             save_vacancy(text)
