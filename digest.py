@@ -115,7 +115,8 @@ async def send_digest(
     today = datetime.now(settings.timezone).date()
     if not force and repository.digest_exists(today, chat_id):
         return 0
-    rows = repository.get_ranked(settings.scoring_threshold)
+    minimum_score = 0 if force else settings.scoring_threshold
+    rows = repository.get_ranked(minimum_score)
     items = select_digest_items(rows)
     if settings.shadow_mode and not force:
         repository.save_digest(
@@ -129,7 +130,11 @@ async def send_digest(
     if not items:
         await application.bot.send_message(
             chat_id=chat_id,
-            text="За последние дни не найдено вакансий с оценкой от 70.",
+            text=(
+                "За последние дни не найдено собранных вакансий."
+                if force
+                else f"За последние дни не найдено вакансий с оценкой от {settings.scoring_threshold}."
+            ),
         )
         if not force:
             repository.save_digest(today, chat_id, [], sent=True, shadow=False)

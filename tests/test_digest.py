@@ -1,7 +1,11 @@
+import asyncio
 import json
+from datetime import timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 from database import Vacancy, VacancyScore
-from digest import select_digest_items
+from digest import select_digest_items, send_digest
 
 
 def row(identifier: int, track: str, total: int):
@@ -48,3 +52,24 @@ def test_digest_backfills_only_high_scores():
     rows += [row(20, "enterprise_epc", 90)]
     selected = select_digest_items(rows, backfill_score=75)
     assert len(selected) == 9
+
+
+def test_forced_digest_includes_collected_vacancies_below_threshold():
+    repository = SimpleNamespace(
+        get_ranked=Mock(return_value=[row(1, "senior_it", 18)]),
+    )
+    bot = SimpleNamespace(send_message=AsyncMock())
+    application = SimpleNamespace(bot=bot)
+    settings = SimpleNamespace(
+        timezone=timezone.utc,
+        scoring_threshold=70,
+        shadow_mode=True,
+    )
+
+    count = asyncio.run(
+        send_digest(application, repository, settings, chat_id=123, force=True)
+    )
+
+    assert count == 1
+    repository.get_ranked.assert_called_once_with(0)
+    assert bot.send_message.await_count == 2
