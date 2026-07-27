@@ -17,8 +17,12 @@ from config import Settings
 from hh_api import VacancyCandidate
 
 
-JOB_URL_RE = re.compile(
+LINKEDIN_JOB_URL_RE = re.compile(
     r"https?://[^\s\"'<>]+(?:linkedin\.com/(?:jobs/view|comm/jobs/view)|jobs)[^\s\"'<>]*",
+    re.IGNORECASE,
+)
+HH_VACANCY_URL_RE = re.compile(
+    r"https?://(?:[\w-]+\.)?hh\.ru/vacancy/(?P<vacancy_id>\d+)[^\s\"'<>]*",
     re.IGNORECASE,
 )
 REMOTE_WORDS = (
@@ -55,7 +59,13 @@ def _content(payload: dict[str, Any]) -> tuple[str, list[tuple[str, str]]]:
             )
             decoded = soup.get_text(" ")
         else:
-            links.extend(("", url) for url in JOB_URL_RE.findall(decoded))
+            links.extend(
+                ("", url) for url in LINKEDIN_JOB_URL_RE.findall(decoded)
+            )
+            links.extend(
+                ("", match.group(0))
+                for match in HH_VACANCY_URL_RE.finditer(decoded)
+            )
         chunks.append(decoded)
     for part in payload.get("parts") or []:
         part_text, part_links = _content(part)
@@ -64,36 +74,46 @@ def _content(payload: dict[str, Any]) -> tuple[str, list[tuple[str, str]]]:
     return " ".join(chunks), links
 
 
-def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
-    payload = message.get("payload") or {}
-    headers = {
-        row.get("name", "").lower(): row.get("value", "")
-        for row in payload.get("headers") or []
-    }
-    subject = _decode_header(headers.get("subject", "Вакансии LinkedIn"))
-    raw_text, raw_links = _content(payload)
-    text = re.sub(r"\s+", " ", raw_text).strip()
-    lowered = f"{subject} {text}".lower()
-    if not any(word in lowered for word in REMOTE_WORDS):
-        return []
-    link_rows = [
-        (title, unquote(url.rstrip(".,)")))
-        for title, url in raw_links
-        if "linkedin.com" in url.lower()
-        and ("/jobs/" in url.lower() or "job" in url.lower())
-    ]
-    if not link_rows:
-        link_rows = [("", url) for url in JOB_URL_RE.findall(text)]
-    unique_links: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for title, url in link_rows:
-        if url not in seen:
-            unique_links.append((title, url))
-            seen.add(url)
-    if not unique_links:
-        unique_links = [(subject, "https://www.linkedin.com/jobs/")]
-    message_id = str(message.get("id") or hashlib.sha256(text.encode()).hexdigest())
-    track = (
+def _normalize_url(url: str) -> str:
+    normalized = url.rstrip(".,)")
+    for _ in range(2):
+        decoded = unquote(normalized)
+        if decoded == normalized:
+            break
+        normalized = decoded
+    return normalized
+
+
+def _hh_vacancy_links(
+    raw_links: list[tuple[str, str]], text: str
+) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for title, raw_url in raw_links:
+        match = HH_VACANCY_URL_RE.search(_normalize_url(raw_url))
+        if match:
+            rows.append(
+                (
+                    title,
+                    match.group(0).split("?", 1)[0],
+                    match.group("vacancy_id"),
+                )
+            )
+    for match in HH_VACANCY_URL_RE.finditer(text):
+        rows.append(
+            (
+                "",
+                match.group(0).split("?", 1)[0],
+                match.group("vacancy_id"),
+            )
+        )
+    unique: dict[str, tuple[str, str, str]] = {}
+    for row in rows:
+        unique.setdefault(row[2], row)
+    return list(unique.values())
+
+
+def _track(lowered: str) -> str:
+    return (
         "senior_it"
         if any(
             word in lowered
@@ -101,11 +121,76 @@ def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
         )
         else "enterprise_epc"
     )
+
+
+def _parse_hh_message(
+    *,
+    subject: str,
+    text: str,
+    raw_links: list[tuple[str, str]],
+) -> list[VacancyCandidate]:
+    link_rows = _hh_vacancy_links(raw_links, text)
+    if not link_rows:
+        return []
+    lowered = f"{subject} {text}".lower()
+    work_format = (
+        "remote" if any(word in lowered for word in REMOTE_WORDS) else None
+    )
+    return [
+        VacancyCandidate(
+            source="hh_email",
+            external_id=f"hh:{vacancy_id}",
+            track=_track(lowered),
+            title=(link_title or subject)[:500],
+            company="Из уведомления HeadHunter",
+            description=text[:20000],
+            salary_from=None,
+            salary_to=None,
+            currency=None,
+            work_format=work_format,
+            location=None,
+            published_at=datetime.now(timezone.utc),
+            url=url,
+            content_hash=hashlib.sha256(
+                f"hh|{vacancy_id}|{subject}|{text}".encode("utf-8")
+            ).hexdigest(),
+        )
+        for link_title, url, vacancy_id in link_rows
+    ]
+
+
+def _parse_linkedin_message(
+    *,
+    message: dict[str, Any],
+    subject: str,
+    text: str,
+    raw_links: list[tuple[str, str]],
+) -> list[VacancyCandidate]:
+    lowered = f"{subject} {text}".lower()
+    if not any(word in lowered for word in REMOTE_WORDS):
+        return []
+    link_rows = [
+        (title, _normalize_url(url))
+        for title, url in raw_links
+        if "linkedin.com" in url.lower()
+        and ("/jobs/" in url.lower() or "job" in url.lower())
+    ]
+    if not link_rows:
+        link_rows = [("", url) for url in LINKEDIN_JOB_URL_RE.findall(text)]
+    unique_links: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for title, url in link_rows:
+        if url not in seen:
+            unique_links.append((title, url))
+            seen.add(url)
+    if not unique_links:
+        return []
+    message_id = str(message.get("id") or hashlib.sha256(text.encode()).hexdigest())
     return [
         VacancyCandidate(
             source="linkedin_email",
             external_id=f"{message_id}:{index}",
-            track=track,
+            track=_track(lowered),
             title=(link_title or subject)[:500],
             company="Из уведомления LinkedIn",
             description=text[:20000],
@@ -124,7 +209,31 @@ def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
     ]
 
 
-class GmailLinkedInSource:
+def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
+    payload = message.get("payload") or {}
+    headers = {
+        row.get("name", "").lower(): row.get("value", "")
+        for row in payload.get("headers") or []
+    }
+    subject = _decode_header(headers.get("subject", "Вакансии"))
+    raw_text, raw_links = _content(payload)
+    text = re.sub(r"\s+", " ", raw_text).strip()
+    hh_candidates = _parse_hh_message(
+        subject=subject,
+        text=text,
+        raw_links=raw_links,
+    )
+    if hh_candidates:
+        return hh_candidates
+    return _parse_linkedin_message(
+        message=message,
+        subject=subject,
+        text=text,
+        raw_links=raw_links,
+    )
+
+
+class GmailJobAlertsSource:
     def __init__(self, settings: Settings):
         self.settings = settings
 
@@ -151,7 +260,7 @@ class GmailLinkedInSource:
             .messages()
             .list(
                 userId="me",
-                q=f'label:"{self.settings.gmail_label}" newer_than:2d',
+                q=self._query(),
                 maxResults=50,
             )
             .execute()
@@ -169,3 +278,19 @@ class GmailLinkedInSource:
 
     async def fetch_recent(self) -> list[VacancyCandidate]:
         return await asyncio.to_thread(self._fetch_sync)
+
+    def _query(self) -> str:
+        labels = {
+            label
+            for label in (
+                self.settings.gmail_label,
+                self.settings.gmail_hh_label,
+            )
+            if label
+        }
+        label_query = " OR ".join(f'label:"{label}"' for label in sorted(labels))
+        return f"({label_query}) newer_than:2d"
+
+
+# Backward-compatible import for older integrations.
+GmailLinkedInSource = GmailJobAlertsSource

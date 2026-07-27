@@ -69,6 +69,7 @@ class Settings:
     gmail_client_secret: str | None
     gmail_refresh_token: str | None
     gmail_label: str
+    gmail_hh_label: str
     telegram_sources_enabled: bool
     telegram_api_id: int | None
     telegram_api_hash: str | None
@@ -133,6 +134,7 @@ class Settings:
             gmail_client_secret=os.getenv("GMAIL_CLIENT_SECRET"),
             gmail_refresh_token=os.getenv("GMAIL_REFRESH_TOKEN"),
             gmail_label=os.getenv("GMAIL_LABEL", "LinkedIn-Jobs"),
+            gmail_hh_label=os.getenv("GMAIL_HH_LABEL", "HH-Jobs"),
             telegram_sources_enabled=_bool_env("TELEGRAM_SOURCES_ENABLED", False),
             telegram_api_id=int(api_id) if api_id else None,
             telegram_api_hash=os.getenv("TELEGRAM_API_HASH"),

@@ -24,12 +24,19 @@
 6. После проверки `/health` и ручного `/digest` установите
    `SHADOW_MODE=false`.
 
-## LinkedIn через Gmail
+## LinkedIn и HeadHunter через Gmail
 
-1. Создайте Gmail OAuth client с read-only scope.
-2. Настройте LinkedIn Job Alerts и Gmail-метку `LinkedIn-Jobs`.
-3. Добавьте `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` и
+1. Создайте Gmail OAuth client со scope
+   `https://www.googleapis.com/auth/gmail.readonly`.
+2. Настройте LinkedIn Job Alerts и официальные автопоиски HeadHunter.
+3. Создайте Gmail-метки `LinkedIn-Jobs` и `HH-Jobs` и направляйте в них
+   соответствующие уведомления. Названия можно изменить через `GMAIL_LABEL` и
+   `GMAIL_HH_LABEL`.
+4. Добавьте `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` и
    включите `GMAIL_ENABLED=true`.
+5. Для основной личной почты безопаснее настроить пересылку только писем
+   HeadHunter в отдельный Gmail бота, а не выдавать приложению доступ ко всему
+   личному почтовому ящику.
 
 ## Публичные Telegram-каналы без API ID
 

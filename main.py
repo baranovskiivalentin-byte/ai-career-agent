@@ -20,7 +20,7 @@ from ai_handler import ask_ai, analyze_vacancy, configure_ai, generate_cover_let
 from config import Settings
 from database import Database
 from digest import send_digest
-from gmail_source import GmailLinkedInSource
+from gmail_source import GmailJobAlertsSource
 from monitor import VacancyMonitor
 from ranking import VacancyRanker
 from telegram_source import TelegramChannelSource
@@ -304,7 +304,7 @@ def build_application() -> Application:
     ranker = VacancyRanker(settings, profile)
     optional_fetchers = []
     if settings.gmail_enabled:
-        optional_fetchers.append(GmailLinkedInSource(settings).fetch_recent)
+        optional_fetchers.append(GmailJobAlertsSource(settings).fetch_recent)
     if settings.telegram_web_enabled:
         optional_fetchers.append(TelegramWebSource(settings, repository).fetch_recent)
     monitor = VacancyMonitor(settings, repository, ranker, optional_fetchers)
