@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from database import Database
 from hh_api import VacancyCandidate
@@ -32,6 +33,11 @@ class FakeHH:
         return self.rows
 
 
+class FailingHH:
+    async def fetch_recent(self):
+        raise AssertionError("HH API не должен вызываться без OAuth")
+
+
 def test_monitor_persists_and_scores_new_candidate(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'monitor.db'}")
     db.create_schema()
@@ -62,3 +68,23 @@ def test_monitor_persists_and_scores_new_candidate(tmp_path):
     stats = asyncio.run(monitor.collect())
     assert stats == {"fetched": 1, "created": 1, "scored": 1, "errors": 0}
     assert len(repository.get_ranked(70)) == 1
+
+
+def test_monitor_skips_hh_without_oauth_credentials(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'monitor-no-hh.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    monitor = VacancyMonitor.__new__(VacancyMonitor)
+    monitor.settings = SimpleNamespace(
+        hh_access_token=None,
+        hh_client_id=None,
+        hh_client_secret=None,
+    )
+    monitor.repository = repository
+    monitor.ranker = FakeRanker()
+    monitor.hh = FailingHH()
+    monitor.optional_fetchers = []
+
+    stats = asyncio.run(monitor.collect())
+
+    assert stats == {"fetched": 0, "created": 0, "scored": 0, "errors": 0}

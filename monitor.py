@@ -29,7 +29,9 @@ class VacancyMonitor:
 
     async def collect(self) -> dict[str, int]:
         stats = {"fetched": 0, "created": 0, "scored": 0, "errors": 0}
-        fetchers: list[SourceFetcher] = [self.hh.fetch_recent, *self.optional_fetchers]
+        fetchers: list[SourceFetcher] = list(self.optional_fetchers)
+        if self._hh_api_configured():
+            fetchers.insert(0, self.hh.fetch_recent)
         for fetcher in fetchers:
             try:
                 candidates = await fetcher()
@@ -52,6 +54,17 @@ class VacancyMonitor:
                     stats["errors"] += 1
         LOGGER.info("Мониторинг завершён: %s", stats)
         return stats
+
+    def _hh_api_configured(self) -> bool:
+        if self.settings is None:
+            return True
+        return bool(
+            self.settings.hh_access_token
+            or (
+                self.settings.hh_client_id
+                and self.settings.hh_client_secret
+            )
+        )
 
     async def ingest_one(self, candidate: VacancyCandidate) -> bool:
         vacancy, created = self.repository.upsert_candidate(candidate)
