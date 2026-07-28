@@ -45,12 +45,18 @@
 
 1. Добавьте в Railway `TELEGRAM_WEB_ENABLED=true`.
 2. При необходимости переопределите список через `TELEGRAM_WEB_CHANNELS`, указав
-   имена через запятую. По умолчанию подключаются восемь проверенных каналов:
+   имена через запятую. По умолчанию подключаются десять проверенных каналов:
    `forproducts`, `jobs_pm`, `careerstation_pm`, `remotegeekjob`, `remoteit`,
-   `evacuatejobs`, `it_vakansii_jobs`, `careerspace`.
+   `evacuatejobs`, `it_vakansii_jobs`, `careerspace`,
+   `jobs_project_managers`, `poisk_udalenka`.
 3. Первый запуск обрабатывает только публикации за последние 72 часа и не более
    пяти подходящих вакансий с каждого канала. Значения настраиваются переменными
    `TELEGRAM_WEB_LOOKBACK_HOURS` и `TELEGRAM_WEB_MAX_POSTS_PER_CHANNEL`.
+   Если в канале больше 20 свежих публикаций, парсер автоматически читает
+   предыдущие страницы (до четырёх по умолчанию); лимит задаёт
+   `TELEGRAM_WEB_MAX_PAGES_PER_CHANNEL`.
+   Для каналов `jobs_project_managers`, `careerstation_pm` и `poisk_udalenka`
+   после первого деплоя выполняется одноразовый сбор за семь дней.
 4. Проверьте список командой `/sources`, состояние — командой `/health`. В статусе
    основной источник отображается как `Публичные Telegram-каналы`, а отдельный
    MTProto-адаптер — как резервный.

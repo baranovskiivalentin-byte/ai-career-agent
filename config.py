@@ -33,6 +33,12 @@ def _list_env(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     )
 
 
+TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28 = (
+    "jobs_project_managers",
+    "careerstation_pm",
+    "poisk_udalenka",
+)
+
 DEFAULT_TELEGRAM_WEB_CHANNELS = (
     "forproducts",
     "jobs_pm",
@@ -42,6 +48,8 @@ DEFAULT_TELEGRAM_WEB_CHANNELS = (
     "evacuatejobs",
     "it_vakansii_jobs",
     "careerspace",
+    "jobs_project_managers",
+    "poisk_udalenka",
 )
 
 
@@ -78,6 +86,7 @@ class Settings:
     telegram_web_channels: tuple[str, ...]
     telegram_web_lookback_hours: int
     telegram_web_max_posts_per_channel: int
+    telegram_web_max_pages_per_channel: int
 
     @classmethod
     def from_env(cls, *, require_core: bool = True) -> "Settings":
@@ -146,6 +155,9 @@ class Settings:
             telegram_web_lookback_hours=_int_env("TELEGRAM_WEB_LOOKBACK_HOURS", 72),
             telegram_web_max_posts_per_channel=_int_env(
                 "TELEGRAM_WEB_MAX_POSTS_PER_CHANNEL", 5
+            ),
+            telegram_web_max_pages_per_channel=_int_env(
+                "TELEGRAM_WEB_MAX_PAGES_PER_CHANNEL", 4
             ),
         )
 

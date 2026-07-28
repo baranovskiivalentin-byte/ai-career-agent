@@ -1,6 +1,12 @@
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import httpx
 
 from telegram_web_source import (
+    TelegramWebSource,
+    _page_boundary,
     is_target_vacancy,
     normalize_channel,
     parse_channel_page,
@@ -88,3 +94,67 @@ def test_parse_channel_page_keeps_currency_salary_scale():
     assert rows[0].salary_from == 5_000
     assert rows[0].salary_to == 6_000
     assert rows[0].currency == "USD"
+
+
+def test_page_boundary_returns_oldest_post_and_timestamp():
+    html = "".join(
+        [
+            post(101, "Project Manager. Remote", "2026-07-21T08:00:00+00:00"),
+            post(95, "Project Manager. Remote", "2026-07-20T08:00:00+00:00"),
+        ]
+    )
+
+    oldest_id, oldest_at = _page_boundary(html)
+
+    assert oldest_id == 95
+    assert oldest_at == datetime(2026, 7, 20, 8, tzinfo=timezone.utc)
+
+
+def test_fetch_channel_reads_older_pages_inside_lookback():
+    now = datetime.now(timezone.utc)
+    first_page = "".join(
+        [
+            post(20, "Python Developer. Remote", (now - timedelta(hours=1)).isoformat()),
+            post(21, "Project Manager. Remote", now.isoformat()),
+        ]
+    )
+    second_page = "".join(
+        [
+            post(
+                18,
+                "Python Developer. Remote",
+                (now - timedelta(hours=80)).isoformat(),
+            ),
+            post(
+                19,
+                "Delivery Manager. Remote",
+                (now - timedelta(hours=2)).isoformat(),
+            ),
+        ]
+    )
+    requested_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_urls.append(str(request.url))
+        html = second_page if request.url.params.get("before") == "20" else first_page
+        return httpx.Response(200, text=html, request=request)
+
+    settings = SimpleNamespace(
+        telegram_web_lookback_hours=72,
+        telegram_web_max_posts_per_channel=5,
+        telegram_web_max_pages_per_channel=4,
+    )
+    source = TelegramWebSource(settings, SimpleNamespace())
+
+    async def run():
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(handler),
+            follow_redirects=True,
+        ) as client:
+            return await source._fetch_channel(client, "jobs_pm")
+
+    rows = asyncio.run(run())
+
+    assert [row.external_id for row in rows] == ["jobs_pm:21", "jobs_pm:19"]
+    assert len(requested_urls) == 2
+    assert requested_urls[1].endswith("?before=20")

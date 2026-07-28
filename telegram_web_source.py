@@ -111,6 +111,23 @@ def _post_datetime(post: Tag) -> datetime:
         return datetime.now(timezone.utc)
 
 
+def _page_boundary(html: str) -> tuple[int | None, datetime | None]:
+    soup = BeautifulSoup(html, "html.parser")
+    post_ids: list[int] = []
+    published_at: list[datetime] = []
+    for post in soup.select("div.tgme_widget_message[data-post]"):
+        data_post = str(post.get("data-post") or "")
+        post_id = data_post.rsplit("/", 1)[-1]
+        if not post_id.isdigit():
+            continue
+        post_ids.append(int(post_id))
+        published_at.append(_post_datetime(post))
+    return (
+        min(post_ids) if post_ids else None,
+        min(published_at) if published_at else None,
+    )
+
+
 def parse_channel_page(
     html: str,
     channel: str,
@@ -174,42 +191,104 @@ class TelegramWebSource:
         self.repository = repository
 
     async def _fetch_channel(
-        self, client: httpx.AsyncClient, channel: str
+        self,
+        client: httpx.AsyncClient,
+        channel: str,
+        *,
+        lookback_hours: int | None = None,
+        max_posts: int | None = None,
+        max_pages: int | None = None,
     ) -> list[VacancyCandidate]:
-        url = f"https://t.me/s/{channel}"
-        response: httpx.Response | None = None
-        for attempt in range(3):
-            try:
-                response = await client.get(url)
-                response.raise_for_status()
-                break
-            except httpx.HTTPStatusError as error:
-                if error.response.status_code not in {429, 500, 502, 503, 504}:
-                    raise
-                if attempt == 2:
-                    raise
-            except httpx.TransportError:
-                if attempt == 2:
-                    raise
-            await asyncio.sleep(2**attempt)
-        if response is None:
-            return []
-        if "/s/" not in str(response.url):
-            LOGGER.warning(
-                "Публичная лента @%s недоступна: перенаправление на %s",
-                channel,
-                response.url,
-            )
-            return []
-        return parse_channel_page(
-            response.text,
-            channel,
-            lookback_hours=self.settings.telegram_web_lookback_hours,
-            max_posts=self.settings.telegram_web_max_posts_per_channel,
+        lookback_hours = (
+            lookback_hours
+            if lookback_hours is not None
+            else self.settings.telegram_web_lookback_hours
         )
+        max_posts = (
+            max_posts
+            if max_posts is not None
+            else self.settings.telegram_web_max_posts_per_channel
+        )
+        max_pages = (
+            max_pages
+            if max_pages is not None
+            else self.settings.telegram_web_max_pages_per_channel
+        )
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=lookback_hours)
+        before: int | None = None
+        candidates: list[VacancyCandidate] = []
+        seen: set[str] = set()
 
-    async def fetch_recent(self) -> list[VacancyCandidate]:
-        channels = [normalize_channel(row) for row in self.repository.list_sources()]
+        for page_number in range(max(1, max_pages)):
+            url = f"https://t.me/s/{channel}"
+            params = {"before": before} if before is not None else None
+            response: httpx.Response | None = None
+            for attempt in range(3):
+                try:
+                    response = await client.get(url, params=params)
+                    response.raise_for_status()
+                    break
+                except httpx.HTTPStatusError as error:
+                    if error.response.status_code not in {429, 500, 502, 503, 504}:
+                        raise
+                    if attempt == 2:
+                        raise
+                except httpx.TransportError:
+                    if attempt == 2:
+                        raise
+                await asyncio.sleep(2**attempt)
+            if response is None:
+                break
+            if "/s/" not in str(response.url):
+                LOGGER.warning(
+                    "Публичная лента @%s недоступна: перенаправление на %s",
+                    channel,
+                    response.url,
+                )
+                break
+
+            remaining = max_posts - len(candidates)
+            for candidate in parse_channel_page(
+                response.text,
+                channel,
+                now=now,
+                lookback_hours=lookback_hours,
+                max_posts=max(1, remaining),
+            ):
+                if candidate.external_id in seen:
+                    continue
+                seen.add(candidate.external_id)
+                candidates.append(candidate)
+                if len(candidates) >= max_posts:
+                    break
+
+            oldest_id, oldest_at = _page_boundary(response.text)
+            if (
+                len(candidates) >= max_posts
+                or oldest_id is None
+                or oldest_at is None
+                or oldest_at < cutoff
+                or (before is not None and oldest_id >= before)
+            ):
+                break
+            before = oldest_id
+            if page_number + 1 < max_pages:
+                await asyncio.sleep(0.4)
+
+        return candidates
+
+    async def fetch_recent(
+        self,
+        *,
+        channels: list[str] | tuple[str, ...] | None = None,
+        lookback_hours: int | None = None,
+        max_posts: int | None = None,
+        max_pages: int | None = None,
+        raise_on_error: bool = False,
+    ) -> list[VacancyCandidate]:
+        source_rows = channels if channels is not None else self.repository.list_sources()
+        channels = [normalize_channel(row) for row in source_rows]
         channels = list(dict.fromkeys(channel for channel in channels if channel))
         if not channels:
             return []
@@ -228,7 +307,17 @@ class TelegramWebSource:
                 if index:
                     await asyncio.sleep(0.4)
                 try:
-                    candidates.extend(await self._fetch_channel(client, channel))
+                    candidates.extend(
+                        await self._fetch_channel(
+                            client,
+                            channel,
+                            lookback_hours=lookback_hours,
+                            max_posts=max_posts,
+                            max_pages=max_pages,
+                        )
+                    )
                 except (httpx.HTTPError, ValueError):
                     LOGGER.exception("Не удалось прочитать Telegram-канал @%s", channel)
+                    if raise_on_error:
+                        raise
         return candidates

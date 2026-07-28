@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 from ai_handler import ask_ai, analyze_vacancy, configure_ai, generate_cover_letter
-from config import Settings
+from config import Settings, TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28
 from database import Database
 from digest import send_digest
 from gmail_source import GmailJobAlertsSource
@@ -48,6 +48,10 @@ COVER_BUTTON = "📝 Сопроводительное"
 LIST_BUTTON = "📂 Последние вакансии"
 PROFILE_BUTTON = "👤 Профиль"
 SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
+TELEGRAM_WEB_EXPANSION_CURSOR = "telegram_web_channels_2026_07_28_seeded"
+TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR = (
+    "telegram_web_channels_2026_07_28_backfilled"
+)
 
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
@@ -230,6 +234,53 @@ async def collect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     await monitor.collect()
 
 
+async def telegram_web_expansion_backfill_job(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    data = services(context)
+    settings: Settings = data["settings"]
+    database: Database = data["database"]
+    if (
+        not settings.telegram_web_enabled
+        or database.get_cursor(TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR)
+    ):
+        return
+
+    source: TelegramWebSource = data["telegram_web_source"]
+    monitor: VacancyMonitor = data["monitor"]
+    try:
+        candidates = await source.fetch_recent(
+            channels=TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28,
+            lookback_hours=168,
+            max_posts=20,
+            max_pages=12,
+            raise_on_error=True,
+        )
+    except Exception:
+        LOGGER.exception("Недельный backfill новых Telegram-каналов не выполнен")
+        return
+
+    created = 0
+    errors = 0
+    for candidate in candidates:
+        try:
+            created += int(await monitor.ingest_one(candidate))
+        except Exception:
+            errors += 1
+            LOGGER.exception(
+                "Не удалось сохранить вакансию недельного backfill %s",
+                candidate.external_id,
+            )
+    if errors == 0:
+        database.set_cursor(TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR, "1")
+    LOGGER.info(
+        "Недельный backfill новых Telegram-каналов: найдено=%s, добавлено=%s, ошибок=%s",
+        len(candidates),
+        created,
+        errors,
+    )
+
+
 async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     data = services(context)
     settings: Settings = data["settings"]
@@ -253,12 +304,23 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def post_init(application: Application) -> None:
     data = application.bot_data
     settings: Settings = data["settings"]
+    database: Database = data["database"]
+    backfill_pending = (
+        settings.telegram_web_enabled
+        and not database.get_cursor(TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR)
+    )
     application.job_queue.run_repeating(
         collect_job,
         interval=settings.hh_poll_interval_seconds,
-        first=5,
+        first=settings.hh_poll_interval_seconds if backfill_pending else 5,
         name="vacancy-monitor",
     )
+    if backfill_pending:
+        application.job_queue.run_once(
+            telegram_web_expansion_backfill_job,
+            when=1,
+            name="telegram-web-expansion-backfill",
+        )
     application.job_queue.run_daily(
         digest_job,
         time=time(
@@ -298,6 +360,12 @@ def build_application() -> Application:
         for channel in settings.telegram_web_channels:
             repository.add_source(channel)
         database.set_cursor("telegram_web_defaults_seeded", "1")
+    if settings.telegram_web_enabled and not database.get_cursor(
+        TELEGRAM_WEB_EXPANSION_CURSOR
+    ):
+        for channel in TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28:
+            repository.add_source(channel)
+        database.set_cursor(TELEGRAM_WEB_EXPANSION_CURSOR, "1")
     configure_legacy_repository(repository)
     configure_ai(settings)
     profile = load_profile()
@@ -305,8 +373,9 @@ def build_application() -> Application:
     optional_fetchers = []
     if settings.gmail_enabled:
         optional_fetchers.append(GmailJobAlertsSource(settings).fetch_recent)
+    telegram_web_source = TelegramWebSource(settings, repository)
     if settings.telegram_web_enabled:
-        optional_fetchers.append(TelegramWebSource(settings, repository).fetch_recent)
+        optional_fetchers.append(telegram_web_source.fetch_recent)
     monitor = VacancyMonitor(settings, repository, ranker, optional_fetchers)
     telegram_source = TelegramChannelSource(settings, repository)
 
@@ -326,6 +395,7 @@ def build_application() -> Application:
             "ranker": ranker,
             "monitor": monitor,
             "telegram_source": telegram_source,
+            "telegram_web_source": telegram_web_source,
         }
     )
     application.add_handler(CommandHandler("start", start))
