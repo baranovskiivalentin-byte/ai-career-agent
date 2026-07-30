@@ -218,6 +218,21 @@ def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
     subject = _decode_header(headers.get("subject", "Вакансии"))
     raw_text, raw_links = _content(payload)
     text = re.sub(r"\s+", " ", raw_text).strip()
+    return parse_email_alert(
+        message_id=str(message.get("id") or hashlib.sha256(text.encode()).hexdigest()),
+        subject=subject,
+        text=text,
+        raw_links=raw_links,
+    )
+
+
+def parse_email_alert(
+    *,
+    message_id: str,
+    subject: str,
+    text: str,
+    raw_links: list[tuple[str, str]],
+) -> list[VacancyCandidate]:
     hh_candidates = _parse_hh_message(
         subject=subject,
         text=text,
@@ -226,7 +241,7 @@ def parse_gmail_message(message: dict[str, Any]) -> list[VacancyCandidate]:
     if hh_candidates:
         return hh_candidates
     return _parse_linkedin_message(
-        message=message,
+        message={"id": message_id},
         subject=subject,
         text=text,
         raw_links=raw_links,

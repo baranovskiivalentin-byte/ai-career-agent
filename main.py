@@ -21,6 +21,7 @@ from config import Settings, TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28
 from database import Database
 from digest import send_digest
 from gmail_source import GmailJobAlertsSource
+from mailru_source import MailRuJobAlertsSource
 from monitor import VacancyMonitor
 from ranking import VacancyRanker
 from telegram_source import TelegramChannelSource
@@ -96,6 +97,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Теневой режим: {'включён' if settings.shadow_mode else 'выключен'}",
         f"HH OAuth: {'настроен' if settings.hh_access_token or (settings.hh_client_id and settings.hh_client_secret) else 'не настроен'}",
         f"Gmail: {'включён' if settings.gmail_enabled else 'выключен'}",
+        f"Mail.ru: {'включён' if settings.mailru_enabled else 'выключен'}",
         f"Публичные Telegram-каналы: {'включены' if settings.telegram_web_enabled else 'выключены'} ({len(telegram_web_sources)})",
         f"Telegram MTProto (резерв): {'включён' if settings.telegram_sources_enabled else 'выключен'}",
     ]
@@ -373,6 +375,8 @@ def build_application() -> Application:
     optional_fetchers = []
     if settings.gmail_enabled:
         optional_fetchers.append(GmailJobAlertsSource(settings).fetch_recent)
+    if settings.mailru_enabled:
+        optional_fetchers.append(MailRuJobAlertsSource(settings).fetch_recent)
     telegram_web_source = TelegramWebSource(settings, repository)
     if settings.telegram_web_enabled:
         optional_fetchers.append(telegram_web_source.fetch_recent)

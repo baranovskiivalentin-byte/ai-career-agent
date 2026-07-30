@@ -78,6 +78,12 @@ class Settings:
     gmail_refresh_token: str | None
     gmail_label: str
     gmail_hh_label: str
+    mailru_enabled: bool
+    mailru_email: str | None
+    mailru_app_password: str | None
+    mailru_folder: str
+    mailru_lookback_days: int
+    mailru_max_messages: int
     telegram_sources_enabled: bool
     telegram_api_id: int | None
     telegram_api_hash: str | None
@@ -144,6 +150,12 @@ class Settings:
             gmail_refresh_token=os.getenv("GMAIL_REFRESH_TOKEN"),
             gmail_label=os.getenv("GMAIL_LABEL", "LinkedIn-Jobs"),
             gmail_hh_label=os.getenv("GMAIL_HH_LABEL", "HH-Jobs"),
+            mailru_enabled=_bool_env("MAILRU_ENABLED", False),
+            mailru_email=os.getenv("MAILRU_EMAIL"),
+            mailru_app_password=os.getenv("MAILRU_APP_PASSWORD"),
+            mailru_folder=os.getenv("MAILRU_FOLDER", "INBOX"),
+            mailru_lookback_days=_int_env("MAILRU_LOOKBACK_DAYS", 2),
+            mailru_max_messages=_int_env("MAILRU_MAX_MESSAGES", 50),
             telegram_sources_enabled=_bool_env("TELEGRAM_SOURCES_ENABLED", False),
             telegram_api_id=int(api_id) if api_id else None,
             telegram_api_hash=os.getenv("TELEGRAM_API_HASH"),
@@ -167,6 +179,12 @@ class Settings:
             [self.gmail_client_id, self.gmail_client_secret, self.gmail_refresh_token]
         ):
             warnings.append("Gmail включён, но OAuth-переменные заданы не полностью")
+        if self.mailru_enabled and not all(
+            [self.mailru_email, self.mailru_app_password]
+        ):
+            warnings.append(
+                "Mail.ru включён, но адрес или пароль приложения не задан"
+            )
         if self.telegram_sources_enabled and not all(
             [self.telegram_api_id, self.telegram_api_hash, self.telegram_session]
         ):
