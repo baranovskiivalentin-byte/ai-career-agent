@@ -37,7 +37,7 @@ def test_gmail_office_alert_is_ignored():
     assert parse_gmail_message(message) == []
 
 
-def test_hh_alert_is_parsed_without_remote_requirement():
+def test_hh_alert_is_ignored_without_full_description():
     body = (
         "Senior Project Manager, Москва "
         "https://hh.ru/vacancy/123456789?from=vacancy_search_list"
@@ -54,15 +54,10 @@ def test_hh_alert_is_parsed_without_remote_requirement():
 
     results = parse_gmail_message(message)
 
-    assert len(results) == 1
-    result = results[0]
-    assert result.source == "hh_email"
-    assert result.external_id == "hh:123456789"
-    assert result.url == "https://hh.ru/vacancy/123456789"
-    assert result.work_format is None
+    assert results == []
 
 
-def test_hh_alert_deduplicates_same_vacancy():
+def test_hh_remote_alert_is_also_ignored():
     body = (
         "Удалённая работа "
         "https://hh.ru/vacancy/123456789 "
@@ -80,8 +75,7 @@ def test_hh_alert_deduplicates_same_vacancy():
 
     results = parse_gmail_message(message)
 
-    assert len(results) == 1
-    assert results[0].work_format == "remote"
+    assert results == []
 
 
 def test_unrelated_email_is_ignored():

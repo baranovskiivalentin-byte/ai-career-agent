@@ -32,9 +32,18 @@ class AIAnalysis(BaseModel):
 ROLE_WORDS = {
     "senior_it": (
         "senior project manager",
+        "technical project manager",
+        "technical program manager",
         "it project manager",
+        "ai project manager",
         "delivery manager",
         "program manager",
+        "implementation manager",
+        "transformation manager",
+        "professional services manager",
+        "pmo lead",
+        "operations lead",
+        "chief of staff",
         "руководитель it-проект",
         "руководитель ит-проект",
     ),
@@ -103,14 +112,23 @@ def deterministic_score(vacancy: Vacancy, track: Track) -> dict[str, Any]:
     salary_value = vacancy.salary_from or vacancy.salary_to
     if salary_value is None:
         salary_score = 5
-    elif (vacancy.currency or "RUR").upper() in {"RUR", "RUB"}:
-        salary_score = (
-            10
-            if salary_value >= 330_000
-            else max(0, round(salary_value / 330_000 * 10))
-        )
     else:
-        salary_score = 5
+        currency = (vacancy.currency or "RUR").upper()
+        monthly_targets = {
+            "RUR": 330_000,
+            "RUB": 330_000,
+            "USD": 4_000,
+            "EUR": 3_500,
+            "GBP": 3_000,
+        }
+        target = monthly_targets.get(currency)
+        salary_score = (
+            5
+            if target is None
+            else 10
+            if salary_value >= target
+            else max(0, round(salary_value / target * 10))
+        )
     if not vacancy.published_at:
         freshness_score = 3
     else:
@@ -233,6 +251,9 @@ class VacancyRanker:
                 "methodologies",
                 "skills",
                 "strong_points",
+                "english",
+                "international_search",
+                "international_salary_min_usd_monthly",
             )
         }
         return (
@@ -240,6 +261,8 @@ class VacancyRanker:
             f"Трек: {track}\n"
             f"Вакансия: {vacancy.title} — {vacancy.company}\n"
             f"Описание:\n{vacancy.description[:12000]}\n"
+            f"Формат работы: {vacancy.work_format}\n"
+            f"Локация/ограничения: {vacancy.location}\n"
             f"Зарплата: {vacancy.salary_from}–{vacancy.salary_to} {vacancy.currency}\n"
             f"Детерминированная предварительная оценка: "
             f"{json.dumps(baseline, ensure_ascii=False)}"

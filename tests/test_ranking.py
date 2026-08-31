@@ -52,3 +52,20 @@ def test_unknown_salary_is_not_rejected():
     )
     assert score["salary_score"] == 5
     assert "Зарплата не указана" in score["risks"]
+
+
+def test_monthly_international_salary_uses_currency_target():
+    score = deterministic_score(
+        make_vacancy(salary_from=5000, salary_to=None, currency="USD"),
+        "senior_it",
+    )
+    assert score["salary_score"] == 10
+
+
+def test_extended_international_role_is_recognized():
+    vacancy = make_vacancy(
+        title="Senior Implementation Manager",
+        description="Remote enterprise AI transformation and stakeholder delivery",
+    )
+    score = deterministic_score(vacancy, "senior_it")
+    assert score["role_score"] > 0

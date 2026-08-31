@@ -134,7 +134,7 @@ def _parse_hh_message(
         return []
     lowered = f"{subject} {text}".lower()
     work_format = (
-        "remote" if any(word in lowered for word in REMOTE_WORDS) else None
+        "remote" if any(word in lowered for word in REMOTE_WORDS) else "unknown"
     )
     return [
         VacancyCandidate(
@@ -239,7 +239,7 @@ def parse_email_alert(
         raw_links=raw_links,
     )
     if hh_candidates:
-        return hh_candidates
+        return []
     return _parse_linkedin_message(
         message={"id": message_id},
         subject=subject,
@@ -295,16 +295,7 @@ class GmailJobAlertsSource:
         return await asyncio.to_thread(self._fetch_sync)
 
     def _query(self) -> str:
-        labels = {
-            label
-            for label in (
-                self.settings.gmail_label,
-                self.settings.gmail_hh_label,
-            )
-            if label
-        }
-        label_query = " OR ".join(f'label:"{label}"' for label in sorted(labels))
-        return f"({label_query}) newer_than:2d"
+        return f'label:"{self.settings.gmail_label}" newer_than:2d'
 
 
 # Backward-compatible import for older integrations.

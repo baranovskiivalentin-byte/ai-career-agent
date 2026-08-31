@@ -28,7 +28,13 @@ class VacancyMonitor:
         self.optional_fetchers = optional_fetchers or []
 
     async def collect(self) -> dict[str, int]:
-        stats = {"fetched": 0, "created": 0, "scored": 0, "errors": 0}
+        stats = {
+            "fetched": 0,
+            "created": 0,
+            "updated": 0,
+            "scored": 0,
+            "errors": 0,
+        }
         fetchers: list[SourceFetcher] = list(self.optional_fetchers)
         if self._hh_api_configured():
             fetchers.insert(0, self.hh.fetch_recent)
@@ -42,9 +48,10 @@ class VacancyMonitor:
             stats["fetched"] += len(candidates)
             for candidate in candidates:
                 try:
-                    created = await self.ingest_one(candidate)
-                    stats["created"] += int(created)
-                    stats["scored"] += int(created)
+                    status = await self.ingest_one_with_status(candidate)
+                    stats["created"] += int(status == "created")
+                    stats["updated"] += int(status == "updated")
+                    stats["scored"] += int(status in {"created", "updated"})
                 except Exception:
                     LOGGER.exception(
                         "Не удалось сохранить/оценить вакансию %s:%s",
@@ -67,8 +74,12 @@ class VacancyMonitor:
         )
 
     async def ingest_one(self, candidate: VacancyCandidate) -> bool:
-        vacancy, created = self.repository.upsert_candidate(candidate)
-        if created:
+        status = await self.ingest_one_with_status(candidate)
+        return status == "created"
+
+    async def ingest_one_with_status(self, candidate: VacancyCandidate) -> str:
+        vacancy, status = self.repository.upsert_candidate_with_status(candidate)
+        if status in {"created", "updated"}:
             score = await self.ranker.score(vacancy)
             self.repository.save_score(vacancy.id, score)
-        return created
+        return status

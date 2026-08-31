@@ -17,12 +17,17 @@ from telegram.ext import (
 )
 
 from ai_handler import ask_ai, analyze_vacancy, configure_ai, generate_cover_letter
-from config import Settings, TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28
+from config import (
+    Settings,
+    TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28,
+    TELEGRAM_WEB_CHANNEL_EXPANSION_2026_08_31,
+)
 from database import Database
 from digest import send_digest
 from gmail_source import GmailJobAlertsSource
-from mailru_source import MailRuJobAlertsSource
+from habr_source import HabrCareerSource
 from monitor import VacancyMonitor
+from public_job_sources import HimalayasSource, JobicySource
 from ranking import VacancyRanker
 from telegram_source import TelegramChannelSource
 from telegram_web_source import TelegramWebSource
@@ -50,6 +55,9 @@ LIST_BUTTON = "📂 Последние вакансии"
 PROFILE_BUTTON = "👤 Профиль"
 SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
 TELEGRAM_WEB_EXPANSION_CURSOR = "telegram_web_channels_2026_07_28_seeded"
+TELEGRAM_WEB_EXPANSION_2026_08_31_CURSOR = (
+    "telegram_web_channels_2026_08_31_seeded"
+)
 TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR = (
     "telegram_web_channels_2026_07_28_backfilled"
 )
@@ -96,8 +104,10 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Дайджест-чат: {'настроен' if chat_id else 'не настроен — выполните /start'}",
         f"Теневой режим: {'включён' if settings.shadow_mode else 'выключен'}",
         f"HH OAuth: {'настроен' if settings.hh_access_token or (settings.hh_client_id and settings.hh_client_secret) else 'не настроен'}",
-        f"Gmail: {'включён' if settings.gmail_enabled else 'выключен'}",
-        f"Mail.ru: {'включён' if settings.mailru_enabled else 'выключен'}",
+        f"Gmail/LinkedIn: {'включён' if settings.gmail_enabled else 'выключен'}",
+        "HH-рассылки: отключены (нет полного описания вакансии)",
+        f"Habr Карьера: {'включена' if settings.habr_jobs_enabled else 'выключена'}",
+        f"Международные вакансии: {'включены' if settings.international_jobs_enabled else 'выключены'} (Himalayas, Jobicy)",
         f"Публичные Telegram-каналы: {'включены' if settings.telegram_web_enabled else 'выключены'} ({len(telegram_web_sources)})",
         f"Telegram MTProto (резерв): {'включён' if settings.telegram_sources_enabled else 'выключен'}",
     ]
@@ -368,6 +378,12 @@ def build_application() -> Application:
         for channel in TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28:
             repository.add_source(channel)
         database.set_cursor(TELEGRAM_WEB_EXPANSION_CURSOR, "1")
+    if settings.telegram_web_enabled and not database.get_cursor(
+        TELEGRAM_WEB_EXPANSION_2026_08_31_CURSOR
+    ):
+        for channel in TELEGRAM_WEB_CHANNEL_EXPANSION_2026_08_31:
+            repository.add_source(channel)
+        database.set_cursor(TELEGRAM_WEB_EXPANSION_2026_08_31_CURSOR, "1")
     configure_legacy_repository(repository)
     configure_ai(settings)
     profile = load_profile()
@@ -375,8 +391,26 @@ def build_application() -> Application:
     optional_fetchers = []
     if settings.gmail_enabled:
         optional_fetchers.append(GmailJobAlertsSource(settings).fetch_recent)
-    if settings.mailru_enabled:
-        optional_fetchers.append(MailRuJobAlertsSource(settings).fetch_recent)
+    habr_source = HabrCareerSource(
+        settings,
+        max_vacancies=settings.public_jobs_max_results,
+        max_card_attempts=min(settings.public_jobs_max_results * 3, 30),
+        ttl_seconds=settings.public_jobs_poll_interval_seconds,
+    )
+    if settings.habr_jobs_enabled:
+        optional_fetchers.append(habr_source.fetch_recent)
+    himalayas_source = HimalayasSource(
+        limit=settings.public_jobs_max_results,
+        cache_ttl_seconds=settings.public_jobs_poll_interval_seconds,
+    )
+    jobicy_source = JobicySource(
+        count=settings.public_jobs_max_results,
+        cache_ttl_seconds=settings.public_jobs_poll_interval_seconds,
+    )
+    if settings.international_jobs_enabled:
+        optional_fetchers.extend(
+            [himalayas_source.fetch_recent, jobicy_source.fetch_recent]
+        )
     telegram_web_source = TelegramWebSource(settings, repository)
     if settings.telegram_web_enabled:
         optional_fetchers.append(telegram_web_source.fetch_recent)
@@ -400,6 +434,9 @@ def build_application() -> Application:
             "monitor": monitor,
             "telegram_source": telegram_source,
             "telegram_web_source": telegram_web_source,
+            "habr_source": habr_source,
+            "himalayas_source": himalayas_source,
+            "jobicy_source": jobicy_source,
         }
     )
     application.add_handler(CommandHandler("start", start))

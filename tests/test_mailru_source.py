@@ -16,7 +16,7 @@ def _raw_message(*, subject: str, body: str, html: bool = False) -> bytes:
     return message.as_bytes()
 
 
-def test_mailru_hh_alert_is_parsed():
+def test_mailru_hh_alert_is_ignored():
     raw = _raw_message(
         subject="Новые вакансии на hh.ru",
         body=(
@@ -27,14 +27,10 @@ def test_mailru_hh_alert_is_parsed():
 
     results = parse_mailru_message(raw, uid="42")
 
-    assert len(results) == 1
-    assert results[0].source == "hh_email"
-    assert results[0].external_id == "hh:987654321"
-    assert results[0].url == "https://hh.ru/vacancy/987654321"
-    assert results[0].work_format == "remote"
+    assert results == []
 
 
-def test_mailru_html_alert_extracts_vacancy_link():
+def test_mailru_html_hh_alert_is_ignored():
     raw = _raw_message(
         subject="Автопоиск вакансий",
         body=(
@@ -46,9 +42,7 @@ def test_mailru_html_alert_extracts_vacancy_link():
 
     results = parse_mailru_message(raw, uid="43")
 
-    assert len(results) == 1
-    assert results[0].title == "IT Project Manager"
-    assert results[0].external_id == "hh:123456789"
+    assert results == []
 
 
 def test_mailru_unrelated_email_is_ignored():
@@ -108,4 +102,4 @@ def test_mailru_source_uses_readonly_imap():
 
     assert fake.readonly is True
     assert fake.commands == ["search", "fetch"]
-    assert len(results) == 1
+    assert results == []

@@ -39,6 +39,11 @@ TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28 = (
     "poisk_udalenka",
 )
 
+TELEGRAM_WEB_CHANNEL_EXPANSION_2026_08_31 = (
+    "forproducts",
+    "remotegeekjob",
+)
+
 DEFAULT_TELEGRAM_WEB_CHANNELS = (
     "forproducts",
     "jobs_pm",
@@ -93,6 +98,10 @@ class Settings:
     telegram_web_lookback_hours: int
     telegram_web_max_posts_per_channel: int
     telegram_web_max_pages_per_channel: int
+    international_jobs_enabled: bool
+    habr_jobs_enabled: bool
+    public_jobs_poll_interval_seconds: int
+    public_jobs_max_results: int
 
     @classmethod
     def from_env(cls, *, require_core: bool = True) -> "Settings":
@@ -171,6 +180,14 @@ class Settings:
             telegram_web_max_pages_per_channel=_int_env(
                 "TELEGRAM_WEB_MAX_PAGES_PER_CHANNEL", 4
             ),
+            international_jobs_enabled=_bool_env(
+                "INTERNATIONAL_JOBS_ENABLED", True
+            ),
+            habr_jobs_enabled=_bool_env("HABR_JOBS_ENABLED", True),
+            public_jobs_poll_interval_seconds=_int_env(
+                "PUBLIC_JOBS_POLL_INTERVAL_SECONDS", 3600
+            ),
+            public_jobs_max_results=_int_env("PUBLIC_JOBS_MAX_RESULTS", 50),
         )
 
     def optional_source_warnings(self) -> list[str]:
@@ -179,11 +196,9 @@ class Settings:
             [self.gmail_client_id, self.gmail_client_secret, self.gmail_refresh_token]
         ):
             warnings.append("Gmail включён, но OAuth-переменные заданы не полностью")
-        if self.mailru_enabled and not all(
-            [self.mailru_email, self.mailru_app_password]
-        ):
+        if self.mailru_enabled:
             warnings.append(
-                "Mail.ru включён, но адрес или пароль приложения не задан"
+                "Mail.ru/HH-рассылки больше не используются: в письмах нет полного описания"
             )
         if self.telegram_sources_enabled and not all(
             [self.telegram_api_id, self.telegram_api_hash, self.telegram_session]

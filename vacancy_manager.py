@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable
+from typing import Iterable, Literal
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from sqlalchemy import desc, func, or_, select
 
@@ -17,11 +19,70 @@ from database import (
 from hh_api import VacancyCandidate
 
 
+UpsertStatus = Literal["created", "updated", "unchanged"]
+TRACKING_QUERY_KEYS = {
+    "from",
+    "gh_src",
+    "hhtmfrom",
+    "hhtmfromlabel",
+    "lever-source",
+    "ref",
+    "referrer",
+    "source",
+    "trk",
+}
+
+
+def normalize_work_format(value: str | None) -> str:
+    normalized = (value or "").strip().lower().replace("-", "_")
+    if normalized in {"remote", "telecommute", "work_from_home"}:
+        return "remote"
+    if normalized in {"hybrid", "гибрид"}:
+        return "hybrid"
+    if normalized in {"on_site", "onsite", "office", "офис"}:
+        return "on_site"
+    return "unknown"
+
+
+def canonicalize_vacancy_url(value: str) -> str:
+    if not value:
+        return ""
+    parts = urlsplit(value.strip())
+    filtered_query = [
+        (key, item)
+        for key, item in parse_qsl(parts.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+        and key.lower() not in TRACKING_QUERY_KEYS
+    ]
+    path = parts.path.rstrip("/") or "/"
+    return urlunsplit(
+        (
+            parts.scheme.lower(),
+            parts.netloc.lower(),
+            path,
+            urlencode(sorted(filtered_query)),
+            "",
+        )
+    )
+
+
 class VacancyRepository:
     def __init__(self, database: Database):
         self.db = database
 
     def upsert_candidate(self, candidate: VacancyCandidate) -> tuple[Vacancy, bool]:
+        vacancy, status = self.upsert_candidate_with_status(candidate)
+        return vacancy, status == "created"
+
+    def upsert_candidate_with_status(
+        self, candidate: VacancyCandidate
+    ) -> tuple[Vacancy, UpsertStatus]:
+        canonical_url = canonicalize_vacancy_url(candidate.url)
+        description = (candidate.description or candidate.title).strip()
+        content_hash = candidate.content_hash or hashlib.sha256(
+            description.encode("utf-8")
+        ).hexdigest()
+        work_format = normalize_work_format(candidate.work_format)
         with self.db.session() as session:
             vacancy = session.scalar(
                 select(Vacancy).where(
@@ -29,54 +90,118 @@ class VacancyRepository:
                     Vacancy.external_id == candidate.external_id,
                 )
             )
-            created = vacancy is None
             if vacancy is None:
-                duplicate = session.scalar(
-                    select(Vacancy).where(
-                        or_(
+                duplicate_filters = [Vacancy.content_hash == content_hash]
+                if canonical_url:
+                    duplicate_filters.extend(
+                        [
+                            Vacancy.url == canonical_url,
                             Vacancy.url == candidate.url,
-                            Vacancy.content_hash == candidate.content_hash,
-                        )
+                        ]
                     )
+                duplicate = session.scalar(
+                    select(Vacancy).where(or_(*duplicate_filters))
                 )
                 if duplicate:
+                    changed = self._merge_candidate(
+                        duplicate,
+                        candidate,
+                        canonical_url=canonical_url,
+                        description=description,
+                        content_hash=content_hash,
+                        work_format=work_format,
+                    )
+                    session.flush()
                     session.expunge(duplicate)
-                    return duplicate, False
+                    return duplicate, "updated" if changed else "unchanged"
                 vacancy = Vacancy(
                     source=candidate.source,
                     external_id=candidate.external_id,
                     track=candidate.track,
                     title=candidate.title,
                     company=candidate.company,
-                    description=candidate.description,
+                    description=description,
                     salary_from=candidate.salary_from,
                     salary_to=candidate.salary_to,
                     currency=candidate.currency,
-                    work_format=candidate.work_format,
+                    work_format=work_format,
                     location=candidate.location,
                     published_at=candidate.published_at,
-                    url=candidate.url,
-                    content_hash=candidate.content_hash,
+                    url=canonical_url,
+                    content_hash=content_hash,
                     archived=candidate.archived,
                 )
                 session.add(vacancy)
+                status: UpsertStatus = "created"
             else:
-                vacancy.track = candidate.track
-                vacancy.title = candidate.title
-                vacancy.company = candidate.company
-                vacancy.description = candidate.description
-                vacancy.salary_from = candidate.salary_from
-                vacancy.salary_to = candidate.salary_to
-                vacancy.currency = candidate.currency
-                vacancy.work_format = candidate.work_format
-                vacancy.location = candidate.location
-                vacancy.published_at = candidate.published_at
-                vacancy.url = candidate.url
-                vacancy.content_hash = candidate.content_hash
-                vacancy.archived = candidate.archived
+                changed = self._merge_candidate(
+                    vacancy,
+                    candidate,
+                    canonical_url=canonical_url,
+                    description=description,
+                    content_hash=content_hash,
+                    work_format=work_format,
+                )
+                status = "updated" if changed else "unchanged"
             session.flush()
             session.expunge(vacancy)
-            return vacancy, created
+            return vacancy, status
+
+    @staticmethod
+    def _merge_candidate(
+        vacancy: Vacancy,
+        candidate: VacancyCandidate,
+        *,
+        canonical_url: str,
+        description: str,
+        content_hash: str,
+        work_format: str,
+    ) -> bool:
+        changed = False
+
+        def assign(name: str, value) -> None:
+            nonlocal changed
+            if value != getattr(vacancy, name):
+                setattr(vacancy, name, value)
+                changed = True
+
+        richer_description = len(description) > len(vacancy.description or "")
+        same_record = (
+            vacancy.source == candidate.source
+            and vacancy.external_id == candidate.external_id
+        )
+        if richer_description or not vacancy.description:
+            assign("description", description)
+            assign("content_hash", content_hash)
+            assign("track", candidate.track)
+        elif same_record and content_hash == vacancy.content_hash:
+            assign("track", candidate.track)
+
+        if candidate.title and (
+            same_record
+            or not vacancy.title
+            or vacancy.title.startswith("Сохранённая вакансия")
+        ):
+            assign("title", candidate.title)
+        if candidate.company and (
+            same_record
+            or not vacancy.company
+            or vacancy.company.startswith("Из уведомления")
+        ):
+            assign("company", candidate.company)
+
+        for name in ("salary_from", "salary_to", "currency", "location"):
+            value = getattr(candidate, name)
+            if value is not None:
+                assign(name, value)
+        if work_format != "unknown" or vacancy.work_format in {None, "unknown"}:
+            assign("work_format", work_format)
+        if candidate.published_at is not None:
+            assign("published_at", candidate.published_at)
+        if canonical_url:
+            assign("url", canonical_url)
+        assign("archived", candidate.archived)
+        return changed
 
     def save_score(self, vacancy_id: int, score: dict) -> None:
         with self.db.session() as session:

@@ -10,7 +10,13 @@
     "IT Project Manager",
     "AI Project Manager",
     "Program Manager",
-    "Delivery Manager"
+    "Delivery Manager",
+    "Technical Project Manager",
+    "Implementation Manager",
+    "Transformation Manager",
+    "PMO Lead",
+    "Operations Lead",
+    "Chief of Staff"
   ],
 
   "preferred_format": [
@@ -100,7 +106,17 @@
 
   "team_size": "20-30 человек",
 
-  "english": "C1",
+  "english": "B1-B2; ранее учился в Норвегии на английском, уровень можно быстро восстановить",
+
+  "international_search": {
+    "geography": "worldwide",
+    "remote_priority": true,
+    "relocation": true,
+    "contractor_b2b": true,
+    "include_country_specific_only_with_sponsorship": true
+  },
+
+  "international_salary_min_usd_monthly": 4000,
 
   "methodologies": [
     "PMBOK",
