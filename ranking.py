@@ -11,7 +11,6 @@ from pydantic import BaseModel, Field
 from config import Settings
 from database import Vacancy
 
-
 LOGGER = logging.getLogger(__name__)
 Track = Literal["senior_it", "enterprise_epc"]
 
@@ -186,6 +185,7 @@ class VacancyRanker:
         self.settings = settings
         self.profile = profile
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._quota_exhausted = False
 
     async def score(self, vacancy: Vacancy) -> dict[str, Any]:
         track: Track = (
@@ -194,6 +194,8 @@ class VacancyRanker:
             else "senior_it"
         )
         baseline = deterministic_score(vacancy, track)
+        if self._quota_exhausted:
+            return baseline
         prompt = self._prompt(vacancy, track, baseline)
         for model in dict.fromkeys(
             [self.settings.scoring_model, self.settings.fallback_model]
@@ -232,7 +234,14 @@ class VacancyRanker:
                 result["total"] = min(100, component_total)
                 result["model"] = model
                 return result
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - scoring must always fall back
+                if _is_insufficient_quota(exc):
+                    self._quota_exhausted = True
+                    LOGGER.warning(
+                        "Баланс OpenAI API исчерпан; до перезапуска используется "
+                        "детерминированный скоринг без повторных запросов"
+                    )
+                    return baseline
                 LOGGER.warning("Скоринг OpenAI (%s) не выполнен: %s", model, exc)
         return baseline
 
@@ -267,3 +276,19 @@ class VacancyRanker:
             f"Детерминированная предварительная оценка: "
             f"{json.dumps(baseline, ensure_ascii=False)}"
         )
+
+
+def _is_insufficient_quota(exc: Exception) -> bool:
+    if getattr(exc, "code", None) == "insufficient_quota":
+        return True
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict) and error.get("code") == "insufficient_quota":
+            return True
+    message = str(exc).lower()
+    return (
+        "insufficient_quota" in message
+        or "credit_balance_exhausted" in message
+        or "no credits remaining" in message
+    )

@@ -1,7 +1,10 @@
+import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from database import Vacancy
-from ranking import deterministic_score
+from ranking import VacancyRanker, deterministic_score
 
 
 def make_vacancy(**overrides):
@@ -69,3 +72,24 @@ def test_extended_international_role_is_recognized():
     )
     score = deterministic_score(vacancy, "senior_it")
     assert score["role_score"] > 0
+
+
+def test_insufficient_quota_disables_repeated_openai_calls():
+    class QuotaError(Exception):
+        code = "insufficient_quota"
+
+    settings = SimpleNamespace(
+        openai_api_key="test-key",
+        scoring_model="primary-model",
+        fallback_model="fallback-model",
+    )
+    ranker = VacancyRanker(settings, {})
+    parse = AsyncMock(side_effect=QuotaError("credit_balance_exhausted"))
+    ranker.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+
+    first = asyncio.run(ranker.score(make_vacancy()))
+    second = asyncio.run(ranker.score(make_vacancy(external_id="2")))
+
+    assert first["model"] == "deterministic"
+    assert second["model"] == "deterministic"
+    assert parse.await_count == 1
