@@ -6,14 +6,13 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from html import unescape
 from typing import Any
 
 import httpx
 
 from config import Settings
-
 
 LOGGER = logging.getLogger(__name__)
 HH_API_URL = "https://api.hh.ru"
@@ -61,12 +60,20 @@ def strip_html(value: str | None) -> str:
     return re.sub(r"\s+", " ", unescape(text)).strip()
 
 
-def parse_datetime(value: str | None) -> datetime | None:
-    if not value:
+def parse_datetime(value: str | float | None) -> datetime | None:
+    if value is None or value == "":
         return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        timestamp = float(value)
+        if abs(timestamp) > 10_000_000_000:
+            timestamp /= 1000
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OSError, OverflowError, ValueError):
+            return None
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+    except (AttributeError, ValueError):
         return None
 
 
@@ -120,9 +127,7 @@ def normalize_hh_vacancy(item: dict[str, Any], track: str) -> VacancyCandidate:
     url = item.get("alternate_url") or item.get("apply_alternate_url") or ""
     external_id = str(item.get("id") or hashlib.sha256(url.encode()).hexdigest())
     content_hash = hashlib.sha256(
-        f"{item.get('name', '')}|{(item.get('employer') or {}).get('name', '')}|{description}".encode(
-            "utf-8"
-        )
+        f"{item.get('name', '')}|{(item.get('employer') or {}).get('name', '')}|{description}".encode()
     ).hexdigest()
     return VacancyCandidate(
         source="hh",
@@ -158,6 +163,7 @@ class HHClient:
 
     async def _ensure_token(self, client: httpx.AsyncClient) -> None:
         if self._access_token and time.monotonic() < self._token_expires_at - 60:
+            client.headers["Authorization"] = f"Bearer {self._access_token}"
             return
         if not self.settings.hh_client_id or not self.settings.hh_client_secret:
             return
@@ -173,7 +179,9 @@ class HHClient:
         data = response.json()
         self._access_token = data["access_token"]
         self._token_expires_at = time.monotonic() + int(data.get("expires_in", 3600))
-        client.headers["Authorization"] = f"Bearer {self._access_token}"
+        authorization = f"Bearer {self._access_token}"
+        self.headers["Authorization"] = authorization
+        client.headers["Authorization"] = authorization
 
     async def _request(
         self, client: httpx.AsyncClient, path: str, params: dict[str, Any] | None = None
