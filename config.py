@@ -138,7 +138,7 @@ class Settings:
             openai_api_key=openai_api_key,
             database_url=database_url,
             telegram_chat_id=int(chat_id) if chat_id else None,
-            hh_poll_interval_seconds=_int_env("HH_POLL_INTERVAL_SECONDS", 600),
+            hh_poll_interval_seconds=_int_env("HH_POLL_INTERVAL_SECONDS", 14400),
             digest_hour=_int_env("DIGEST_HOUR", 19),
             digest_minute=_int_env("DIGEST_MINUTE", 0),
             timezone=ZoneInfo(os.getenv("TIMEZONE", "Europe/Moscow")),

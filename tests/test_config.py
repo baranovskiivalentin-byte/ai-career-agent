@@ -26,3 +26,9 @@ def test_public_job_sources_are_enabled_by_default(monkeypatch):
     assert settings.international_jobs_enabled is True
     assert settings.habr_jobs_enabled is True
     assert settings.public_jobs_poll_interval_seconds == 3600
+
+
+def test_vacancy_monitor_runs_every_four_hours_by_default(monkeypatch):
+    monkeypatch.delenv("HH_POLL_INTERVAL_SECONDS", raising=False)
+    settings = Settings.from_env(require_core=False)
+    assert settings.hh_poll_interval_seconds == 4 * 60 * 60
