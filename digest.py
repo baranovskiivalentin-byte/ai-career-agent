@@ -111,12 +111,17 @@ async def send_digest(
     chat_id: int,
     *,
     force: bool = False,
+    sources: set[str] | None = None,
 ) -> int:
     today = datetime.now(settings.timezone).date()
     if not force and repository.digest_exists(today, chat_id):
         return 0
     minimum_score = 0 if force else settings.scoring_threshold
-    rows = repository.get_ranked(minimum_score)
+    rows = (
+        repository.get_ranked(minimum_score, sources=sources)
+        if sources
+        else repository.get_ranked(minimum_score)
+    )
     items = select_digest_items(rows)
     if settings.shadow_mode and not force:
         repository.save_digest(

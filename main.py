@@ -29,6 +29,7 @@ from habr_source import HabrCareerSource
 from monitor import VacancyMonitor
 from public_job_sources import HimalayasSource, JobicySource
 from ranking import VacancyRanker
+from scanner_digest import send_scanner_today
 from telegram_source import TelegramChannelSource
 from telegram_web_source import TelegramWebSource
 from telegram_messages import reply_text_safely
@@ -53,7 +54,9 @@ ANALYZE_BUTTON = "📊 Анализ вакансии"
 COVER_BUTTON = "📝 Сопроводительное"
 LIST_BUTTON = "📂 Последние вакансии"
 PROFILE_BUTTON = "👤 Профиль"
-SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
+SEND_HH_DIGEST_BUTTON = "📬 Прислать вакансии HeadHunter"
+SEND_SCANNER_BUTTON = "🔎 Прислать новые вакансии Scanner"
+LEGACY_SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
 TELEGRAM_WEB_EXPANSION_CURSOR = "telegram_web_channels_2026_07_28_seeded"
 TELEGRAM_WEB_EXPANSION_2026_08_31_CURSOR = (
     "telegram_web_channels_2026_08_31_seeded"
@@ -66,7 +69,8 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
     [
         [ANALYZE_BUTTON, COVER_BUTTON],
         [LIST_BUTTON, PROFILE_BUTTON],
-        [SEND_DIGEST_BUTTON],
+        [SEND_HH_DIGEST_BUTTON],
+        [SEND_SCANNER_BUTTON],
     ],
     resize_keyboard=True,
 )
@@ -124,6 +128,7 @@ async def digest_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         settings,
         update.effective_chat.id,
         force=True,
+        sources={"hh", "hh_email"},
     )
     if count:
         LOGGER.info("Ручной дайджест: %s вакансий", count)
@@ -167,8 +172,17 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = (update.effective_message.text or "").strip()
     profile = services(context)["profile"]
     try:
-        if text == SEND_DIGEST_BUTTON:
+        if text in {SEND_HH_DIGEST_BUTTON, LEGACY_SEND_DIGEST_BUTTON}:
             await digest_command(update, context)
+            return
+        if text == SEND_SCANNER_BUTTON:
+            count = await send_scanner_today(
+                context.application,
+                services(context)["repository"],
+                services(context)["settings"],
+                update.effective_chat.id,
+            )
+            LOGGER.info("Ручная выдача Scanner: %s вакансий", count)
             return
         if context.user_data.pop("waiting_for_vacancy", False):
             answer = await analyze_vacancy(text, profile)

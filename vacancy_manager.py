@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -239,11 +239,15 @@ class VacancyRepository:
             return row
 
     def get_ranked(
-        self, minimum_score: int, hours: int = 72
+        self,
+        minimum_score: int,
+        hours: int = 72,
+        *,
+        sources: set[str] | None = None,
     ) -> list[tuple[Vacancy, VacancyScore]]:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
         with self.db.session() as session:
-            rows = session.execute(
+            query = (
                 select(Vacancy, VacancyScore)
                 .join(VacancyScore, VacancyScore.vacancy_id == Vacancy.id)
                 .where(
@@ -253,13 +257,39 @@ class VacancyRepository:
                     Vacancy.created_at >= since,
                 )
                 .order_by(desc(VacancyScore.total), desc(Vacancy.published_at))
-            ).all()
+            )
+            if sources:
+                query = query.where(Vacancy.source.in_(sources))
+            rows = session.execute(query).all()
             result = []
             for vacancy, score in rows:
                 session.expunge(vacancy)
                 session.expunge(score)
                 result.append((vacancy, score))
             return result
+
+    def get_scanner_for_date(self, target_date: date, tz) -> list[Vacancy]:
+        """Return active scanner vacancies first seen on a local calendar date."""
+        start = datetime.combine(target_date, time.min, tzinfo=tz).astimezone(
+            timezone.utc
+        )
+        end = start + timedelta(days=1)
+        with self.db.session() as session:
+            rows = list(
+                session.scalars(
+                    select(Vacancy)
+                    .where(
+                        Vacancy.source == "scanner",
+                        Vacancy.archived.is_(False),
+                        Vacancy.published_at >= start,
+                        Vacancy.published_at < end,
+                    )
+                    .order_by(Vacancy.track, Vacancy.company, Vacancy.title)
+                )
+            )
+            for vacancy in rows:
+                session.expunge(vacancy)
+            return rows
 
     def record_action(
         self,
