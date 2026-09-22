@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from hashlib import sha256
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
@@ -102,9 +102,11 @@ class Settings:
     habr_jobs_enabled: bool
     public_jobs_poll_interval_seconds: int
     public_jobs_max_results: int
+    dashboard_token: str | None
+    dashboard_port: int
 
     @classmethod
-    def from_env(cls, *, require_core: bool = True) -> "Settings":
+    def from_env(cls, *, require_core: bool = True) -> Settings:
         telegram_token = os.getenv("TELEGRAM_TOKEN", "")
         openai_api_key = os.getenv("OPENAI_API_KEY", "")
         if require_core:
@@ -133,6 +135,11 @@ class Settings:
 
         chat_id = os.getenv("TELEGRAM_CHAT_ID")
         api_id = os.getenv("TELEGRAM_API_ID")
+        dashboard_token = os.getenv("DASHBOARD_TOKEN") or (
+            sha256(f"career-dashboard-v1:{telegram_token}".encode()).hexdigest()
+            if telegram_token
+            else None
+        )
         return cls(
             telegram_token=telegram_token,
             openai_api_key=openai_api_key,
@@ -188,6 +195,8 @@ class Settings:
                 "PUBLIC_JOBS_POLL_INTERVAL_SECONDS", 3600
             ),
             public_jobs_max_results=_int_env("PUBLIC_JOBS_MAX_RESULTS", 50),
+            dashboard_token=dashboard_token,
+            dashboard_port=_int_env("PORT", _int_env("DASHBOARD_PORT", 8080)),
         )
 
     def optional_source_warnings(self) -> list[str]:

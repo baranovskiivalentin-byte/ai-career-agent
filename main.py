@@ -22,6 +22,7 @@ from config import (
     TELEGRAM_WEB_CHANNEL_EXPANSION_2026_08_31,
     Settings,
 )
+from dashboard_server import start_dashboard_server
 from database import Database
 from digest import send_digest
 from gmail_source import GmailJobAlertsSource
@@ -490,5 +491,18 @@ def build_application() -> Application:
 
 if __name__ == "__main__":
     app = build_application()
+    settings: Settings = app.bot_data["settings"]
+    dashboard_server = start_dashboard_server(
+        app.bot_data["database"],
+        token=settings.dashboard_token,
+        port=settings.dashboard_port,
+        tz=settings.timezone,
+        scoring_threshold=settings.scoring_threshold,
+    )
     LOGGER.info("AI Career Agent запущен 🚀")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        if dashboard_server:
+            dashboard_server.shutdown()
+            dashboard_server.server_close()
