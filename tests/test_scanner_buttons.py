@@ -1,11 +1,11 @@
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from database import Database, Vacancy
 from hh_api import VacancyCandidate
-from scanner_digest import send_scanner_today
+from scanner_digest import send_scanner_recommendations, send_scanner_today
 from vacancy_manager import VacancyRepository
 
 
@@ -67,6 +67,7 @@ def test_scanner_button_sends_only_active_rows_for_requested_date(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'scanner.db'}")
     db.create_schema()
     repository = VacancyRepository(db)
+    today = datetime.now(timezone.utc)
     with db.session() as session:
         session.add_all(
             [
@@ -78,7 +79,7 @@ def test_scanner_button_sends_only_active_rows_for_requested_date(tmp_path):
                     company="Example",
                     description="Scanner",
                     work_format="unknown",
-                    published_at=datetime(2026, 9, 21, 18, 30, tzinfo=timezone.utc),
+                    published_at=today,
                     url="https://example.com/today",
                     content_hash="today",
                     archived=False,
@@ -91,22 +92,23 @@ def test_scanner_button_sends_only_active_rows_for_requested_date(tmp_path):
                     company="Example",
                     description="Scanner",
                     work_format="unknown",
-                    published_at=datetime(2026, 9, 21, 19, 0, tzinfo=timezone.utc),
+                    published_at=today,
                     url="https://example.com/not-seen",
                     content_hash="not-seen",
                     archived=True,
                 ),
             ]
         )
-    rows = repository.get_scanner_for_date(date(2026, 9, 21), timezone.utc)
+    rows = repository.get_scanner_for_date(today.date(), timezone.utc)
     assert [row.external_id for row in rows] == ["today"]
+    score(repository, rows[0].id)
 
     bot = SimpleNamespace(send_message=AsyncMock())
     count = asyncio.run(
         send_scanner_today(
             SimpleNamespace(bot=bot),
-            SimpleNamespace(get_scanner_for_date=lambda *_: rows),
-            SimpleNamespace(timezone=timezone.utc),
+            repository,
+            SimpleNamespace(timezone=timezone.utc, scoring_threshold=70),
             chat_id=123,
         )
     )
@@ -115,3 +117,86 @@ def test_scanner_button_sends_only_active_rows_for_requested_date(tmp_path):
     assert bot.send_message.await_args_list[1].kwargs[
         "reply_markup"
     ].inline_keyboard[0][0].url == "https://example.com/today"
+    assert "80/100" in bot.send_message.await_args_list[1].kwargs["text"]
+    assert "Рекомендую откликнуться" in bot.send_message.await_args_list[1].kwargs["text"]
+
+
+def test_pending_scanner_score_requires_full_description(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'pending-scanner.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    with db.session() as session:
+        session.add_all(
+            [
+                Vacancy(
+                    source="scanner",
+                    external_id="rich",
+                    track="scanner_primary",
+                    title="IT Project Manager",
+                    company="Example",
+                    description="Full official requirements and duties. " * 12,
+                    work_format="unknown",
+                    published_at=datetime.now(timezone.utc),
+                    url="https://example.com/rich",
+                    content_hash="rich",
+                    archived=False,
+                ),
+                Vacancy(
+                    source="scanner",
+                    external_id="stub",
+                    track="scanner_primary",
+                    title="Project Manager",
+                    company="Example",
+                    description="Vacancy Scanner: PRIMARY",
+                    work_format="unknown",
+                    published_at=datetime.now(timezone.utc),
+                    url="https://example.com/stub",
+                    content_hash="stub",
+                    archived=False,
+                ),
+            ]
+        )
+
+    pending = repository.get_pending_scanner_scores()
+
+    assert [row.external_id for row in pending] == ["rich"]
+    score(repository, pending[0].id)
+    assert repository.get_pending_scanner_scores() == []
+
+
+def test_scanner_recommendations_show_scored_active_vacancy(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'recommendations.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    with db.session() as session:
+        session.add(
+            Vacancy(
+                source="scanner",
+                external_id="best",
+                track="scanner_primary",
+                title="IT Project Manager",
+                company="Example",
+                description="Full official requirements and duties. " * 12,
+                work_format="unknown",
+                published_at=datetime.now(timezone.utc),
+                url="https://example.com/best",
+                content_hash="best",
+                archived=False,
+            )
+        )
+    vacancy = repository.get_pending_scanner_scores()[0]
+    score(repository, vacancy.id)
+    bot = SimpleNamespace(send_message=AsyncMock())
+
+    count = asyncio.run(
+        send_scanner_recommendations(
+            SimpleNamespace(bot=bot),
+            repository,
+            SimpleNamespace(timezone=timezone.utc, scoring_threshold=70),
+            chat_id=123,
+        )
+    )
+
+    assert count == 1
+    assert bot.send_message.await_count == 2
+    assert "80/100" in bot.send_message.await_args_list[1].kwargs["text"]

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+from collections.abc import Iterable
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Iterable, Literal
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 
 from database import (
     Database,
@@ -15,9 +16,9 @@ from database import (
     UserAction,
     Vacancy,
     VacancyScore,
+    utc_now,
 )
 from hh_api import VacancyCandidate
-
 
 UpsertStatus = Literal["created", "updated", "unchanged"]
 TRACKING_QUERY_KEYS = {
@@ -226,6 +227,7 @@ class VacancyRepository:
             if row:
                 for key, value in values.items():
                     setattr(row, key, value)
+                row.created_at = utc_now()
             else:
                 session.add(
                     VacancyScore(vacancy_id=vacancy_id, track=score["track"], **values)
@@ -290,6 +292,105 @@ class VacancyRepository:
             for vacancy in rows:
                 session.expunge(vacancy)
             return rows
+
+    def get_scanner_for_date_with_scores(
+        self, target_date: date, tz
+    ) -> list[tuple[Vacancy, VacancyScore | None]]:
+        """Return today's scanner vacancies together with their AI assessment."""
+        start = datetime.combine(target_date, time.min, tzinfo=tz).astimezone(
+            timezone.utc
+        )
+        end = start + timedelta(days=1)
+        with self.db.session() as session:
+            rows = session.execute(
+                select(Vacancy, VacancyScore)
+                .outerjoin(
+                    VacancyScore,
+                    and_(
+                        VacancyScore.vacancy_id == Vacancy.id,
+                        VacancyScore.track == "senior_it",
+                    ),
+                )
+                .where(
+                    Vacancy.source == "scanner",
+                    Vacancy.archived.is_(False),
+                    Vacancy.published_at >= start,
+                    Vacancy.published_at < end,
+                )
+                .order_by(
+                    desc(VacancyScore.total),
+                    Vacancy.track,
+                    Vacancy.company,
+                    Vacancy.title,
+                )
+            ).all()
+            result = []
+            for vacancy, score in rows:
+                session.expunge(vacancy)
+                if score:
+                    session.expunge(score)
+                result.append((vacancy, score))
+            return result
+
+    def get_pending_scanner_scores(self, limit: int = 10) -> list[Vacancy]:
+        """Return enriched scanner vacancies missing a current AI assessment."""
+        with self.db.session() as session:
+            rows = list(
+                session.scalars(
+                    select(Vacancy)
+                    .outerjoin(
+                        VacancyScore,
+                        and_(
+                            VacancyScore.vacancy_id == Vacancy.id,
+                            VacancyScore.track == "senior_it",
+                        ),
+                    )
+                    .where(
+                        Vacancy.source == "scanner",
+                        Vacancy.archived.is_(False),
+                        func.length(Vacancy.description) >= 200,
+                        Vacancy.description.not_like("Vacancy Scanner:%"),
+                        or_(
+                            VacancyScore.id.is_(None),
+                            VacancyScore.created_at < Vacancy.updated_at,
+                        ),
+                    )
+                    .order_by(desc(Vacancy.published_at), desc(Vacancy.updated_at))
+                    .limit(limit)
+                )
+            )
+            for vacancy in rows:
+                session.expunge(vacancy)
+            return rows
+
+    def get_scanner_recommendations(
+        self, minimum_score: int = 50, limit: int = 20
+    ) -> list[tuple[Vacancy, VacancyScore]]:
+        """Return the best active scanner vacancies for a manual review."""
+        with self.db.session() as session:
+            rows = session.execute(
+                select(Vacancy, VacancyScore)
+                .join(
+                    VacancyScore,
+                    and_(
+                        VacancyScore.vacancy_id == Vacancy.id,
+                        VacancyScore.track == "senior_it",
+                    ),
+                )
+                .where(
+                    Vacancy.source == "scanner",
+                    Vacancy.archived.is_(False),
+                    VacancyScore.total >= minimum_score,
+                )
+                .order_by(desc(VacancyScore.total), desc(Vacancy.published_at))
+                .limit(limit)
+            ).all()
+            result = []
+            for vacancy, score in rows:
+                session.expunge(vacancy)
+                session.expunge(score)
+                result.append((vacancy, score))
+            return result
 
     def record_action(
         self,

@@ -2,19 +2,34 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from main import MAIN_KEYBOARD, SEND_DIGEST_BUTTON, text_router
+from main import (
+    ANALYZE_BUTTON,
+    COVER_BUTTON,
+    LIST_BUTTON,
+    MAIN_KEYBOARD,
+    PROFILE_BUTTON,
+    SCANNER_RECOMMENDATIONS_BUTTON,
+    SEND_HH_DIGEST_BUTTON,
+    SEND_SCANNER_BUTTON,
+    text_router,
+)
 
 
-def test_main_keyboard_contains_manual_digest_button():
-    assert any(
-        button.text == SEND_DIGEST_BUTTON
-        for row in MAIN_KEYBOARD.keyboard
-        for button in row
-    )
+def test_main_keyboard_keeps_existing_buttons_and_adds_scanner_actions():
+    labels = {button.text for row in MAIN_KEYBOARD.keyboard for button in row}
+    assert labels == {
+        ANALYZE_BUTTON,
+        COVER_BUTTON,
+        LIST_BUTTON,
+        PROFILE_BUTTON,
+        SEND_HH_DIGEST_BUTTON,
+        SEND_SCANNER_BUTTON,
+        SCANNER_RECOMMENDATIONS_BUTTON,
+    }
 
 
 def test_manual_digest_button_routes_to_forced_digest():
-    message = SimpleNamespace(text=SEND_DIGEST_BUTTON)
+    message = SimpleNamespace(text=SEND_HH_DIGEST_BUTTON)
     update = SimpleNamespace(effective_message=message)
     context = SimpleNamespace(
         application=SimpleNamespace(bot_data={"profile": {}}),

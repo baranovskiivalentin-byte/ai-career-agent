@@ -16,11 +16,11 @@ from telegram.ext import (
     filters,
 )
 
-from ai_handler import ask_ai, analyze_vacancy, configure_ai, generate_cover_letter
+from ai_handler import analyze_vacancy, ask_ai, configure_ai, generate_cover_letter
 from config import (
-    Settings,
     TELEGRAM_WEB_CHANNEL_EXPANSION_2026_07_28,
     TELEGRAM_WEB_CHANNEL_EXPANSION_2026_08_31,
+    Settings,
 )
 from database import Database
 from digest import send_digest
@@ -29,10 +29,10 @@ from habr_source import HabrCareerSource
 from monitor import VacancyMonitor
 from public_job_sources import HimalayasSource, JobicySource
 from ranking import VacancyRanker
-from scanner_digest import send_scanner_today
+from scanner_digest import send_scanner_recommendations, send_scanner_today
+from telegram_messages import reply_text_safely
 from telegram_source import TelegramChannelSource
 from telegram_web_source import TelegramWebSource
-from telegram_messages import reply_text_safely
 from vacancy_manager import (
     VacancyRepository,
     configure_legacy_repository,
@@ -40,7 +40,6 @@ from vacancy_manager import (
     get_stats,
     save_vacancy,
 )
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +55,7 @@ LIST_BUTTON = "📂 Последние вакансии"
 PROFILE_BUTTON = "👤 Профиль"
 SEND_HH_DIGEST_BUTTON = "📬 Прислать вакансии HeadHunter"
 SEND_SCANNER_BUTTON = "🔎 Прислать новые вакансии Scanner"
+SCANNER_RECOMMENDATIONS_BUTTON = "🎯 Рекомендованные Scanner"
 LEGACY_SEND_DIGEST_BUTTON = "📬 Прислать собранные вакансии"
 TELEGRAM_WEB_EXPANSION_CURSOR = "telegram_web_channels_2026_07_28_seeded"
 TELEGRAM_WEB_EXPANSION_2026_08_31_CURSOR = (
@@ -71,6 +71,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         [LIST_BUTTON, PROFILE_BUTTON],
         [SEND_HH_DIGEST_BUTTON],
         [SEND_SCANNER_BUTTON],
+        [SCANNER_RECOMMENDATIONS_BUTTON],
     ],
     resize_keyboard=True,
 )
@@ -184,6 +185,15 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             )
             LOGGER.info("Ручная выдача Scanner: %s вакансий", count)
             return
+        if text == SCANNER_RECOMMENDATIONS_BUTTON:
+            count = await send_scanner_recommendations(
+                context.application,
+                services(context)["repository"],
+                services(context)["settings"],
+                update.effective_chat.id,
+            )
+            LOGGER.info("Рекомендации Scanner: %s вакансий", count)
+            return
         if context.user_data.pop("waiting_for_vacancy", False):
             answer = await analyze_vacancy(text, profile)
             save_vacancy(text)
@@ -258,6 +268,11 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def collect_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     monitor: VacancyMonitor = services(context)["monitor"]
     await monitor.collect()
+
+
+async def scanner_scoring_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    monitor: VacancyMonitor = services(context)["monitor"]
+    await monitor.score_pending_scanner(limit=10)
 
 
 async def telegram_web_expansion_backfill_job(
@@ -340,6 +355,12 @@ async def post_init(application: Application) -> None:
         interval=settings.hh_poll_interval_seconds,
         first=settings.hh_poll_interval_seconds if backfill_pending else 5,
         name="vacancy-monitor",
+    )
+    application.job_queue.run_repeating(
+        scanner_scoring_job,
+        interval=300,
+        first=15,
+        name="scanner-scoring",
     )
     if backfill_pending:
         application.job_queue.run_once(

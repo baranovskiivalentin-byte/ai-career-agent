@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from config import Settings
 from hh_api import HHClient, VacancyCandidate
 from ranking import VacancyRanker
 from vacancy_manager import VacancyRepository
-
 
 LOGGER = logging.getLogger(__name__)
 SourceFetcher = Callable[[], Awaitable[list[VacancyCandidate]]]
@@ -76,6 +75,24 @@ class VacancyMonitor:
     async def ingest_one(self, candidate: VacancyCandidate) -> bool:
         status = await self.ingest_one_with_status(candidate)
         return status == "created"
+
+    async def score_pending_scanner(self, limit: int = 10) -> dict[str, int]:
+        """Score scanner vacancies enriched with an official full description."""
+        stats = {"candidates": 0, "scored": 0, "errors": 0}
+        for vacancy in self.repository.get_pending_scanner_scores(limit=limit):
+            stats["candidates"] += 1
+            try:
+                score = await self.ranker.score(vacancy)
+                self.repository.save_score(vacancy.id, score)
+                stats["scored"] += 1
+            except Exception:
+                LOGGER.exception(
+                    "Не удалось оценить scanner-вакансию %s", vacancy.id
+                )
+                stats["errors"] += 1
+        if stats["candidates"]:
+            LOGGER.info("Оценка Scanner завершена: %s", stats)
+        return stats
 
     async def ingest_one_with_status(self, candidate: VacancyCandidate) -> str:
         vacancy, status = self.repository.upsert_candidate_with_status(candidate)
