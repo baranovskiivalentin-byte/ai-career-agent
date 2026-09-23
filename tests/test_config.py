@@ -32,3 +32,9 @@ def test_vacancy_monitor_runs_every_four_hours_by_default(monkeypatch):
     monkeypatch.delenv("HH_POLL_INTERVAL_SECONDS", raising=False)
     settings = Settings.from_env(require_core=False)
     assert settings.hh_poll_interval_seconds == 4 * 60 * 60
+
+
+def test_fallback_digest_threshold_defaults_to_fifty(monkeypatch):
+    monkeypatch.delenv("SCORING_FALLBACK_THRESHOLD", raising=False)
+    settings = Settings.from_env(require_core=False)
+    assert settings.scoring_fallback_threshold == 50

@@ -94,6 +94,23 @@ class VacancyMonitor:
             LOGGER.info("Оценка Scanner завершена: %s", stats)
         return stats
 
+    async def rescore_recent_fallbacks(self, limit: int = 20) -> dict[str, int]:
+        """Re-evaluate a small, fresh batch after OpenAI credits are restored."""
+        stats = {"candidates": 0, "rescored": 0, "errors": 0}
+        for vacancy in self.repository.get_deterministic_for_rescore(limit=limit):
+            stats["candidates"] += 1
+            try:
+                score = await self.ranker.score(vacancy)
+                self.repository.save_score(vacancy.id, score)
+                stats["rescored"] += int(score["model"] != "deterministic")
+            except Exception:
+                LOGGER.exception("Не удалось повторно оценить вакансию %s", vacancy.id)
+                stats["errors"] += 1
+            if self.ranker.quota_exhausted:
+                break
+        LOGGER.info("Повторная AI-оценка завершена: %s", stats)
+        return stats
+
     async def ingest_one_with_status(self, candidate: VacancyCandidate) -> str:
         vacancy, status = self.repository.upsert_candidate_with_status(candidate)
         if status in {"created", "updated"}:

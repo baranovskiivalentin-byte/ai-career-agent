@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from database import Database
+from database import Database, Vacancy
 from hh_api import VacancyCandidate
 from vacancy_manager import VacancyRepository
 
@@ -90,3 +90,131 @@ def test_richer_duplicate_updates_description_and_canonicalizes_url(tmp_path):
     assert duplicate.id == first.id
     assert duplicate.description == rich.description
     assert duplicate.url == "https://example.com/jobs/42"
+
+
+def test_ranked_uses_publication_date_not_database_insert_date(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'published-date.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    vacancy, _ = repository.upsert_candidate(candidate())
+    repository.save_score(
+        vacancy.id,
+        {
+            "track": "senior_it",
+            "total": 80,
+            "role_score": 30,
+            "seniority_score": 15,
+            "domain_score": 10,
+            "experience_score": 10,
+            "salary_score": 10,
+            "freshness_score": 5,
+            "reasons": ["Подходит"],
+            "risks": [],
+            "model": "test",
+        },
+    )
+    with db.session() as session:
+        stored = session.get(Vacancy, vacancy.id)
+        stored.created_at = datetime.now(timezone.utc) - timedelta(days=10)
+
+    assert len(repository.get_ranked(70)) == 1
+
+
+def test_ranked_includes_hybrid_vacancy(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'hybrid.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    row = candidate()
+    row.work_format = "hybrid"
+    vacancy, _ = repository.upsert_candidate(row)
+    repository.save_score(
+        vacancy.id,
+        {
+            "track": "senior_it",
+            "total": 80,
+            "role_score": 30,
+            "seniority_score": 15,
+            "domain_score": 10,
+            "experience_score": 10,
+            "salary_score": 10,
+            "freshness_score": 5,
+            "reasons": ["Подходит"],
+            "risks": [],
+            "model": "test",
+        },
+    )
+
+    assert repository.get_ranked(70)[0][0].work_format == "hybrid"
+
+
+def test_ranked_can_filter_headhunter_sources(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'sources.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    hh = candidate(external_id="hh", url="https://hh.ru/vacancy/1")
+    hh.source = "hh"
+    other = candidate(external_id="habr", url="https://career.habr.com/vacancies/1")
+    other.source = "habr"
+    for row in (hh, other):
+        vacancy, _ = repository.upsert_candidate(row)
+        repository.save_score(
+            vacancy.id,
+            {
+                "track": "senior_it",
+                "total": 80,
+                "role_score": 30,
+                "seniority_score": 15,
+                "domain_score": 10,
+                "experience_score": 10,
+                "salary_score": 10,
+                "freshness_score": 5,
+                "reasons": ["Подходит"],
+                "risks": [],
+                "model": "test",
+            },
+        )
+
+    rows = repository.get_ranked(0, sources={"hh", "hh_email"})
+
+    assert [vacancy.source for vacancy, _ in rows] == ["hh"]
+
+
+def test_scanner_query_uses_first_seen_calendar_date(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'scanner.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    with db.session() as session:
+        session.add_all(
+            [
+                Vacancy(
+                    source="scanner",
+                    external_id="today",
+                    track="scanner_primary",
+                    title="Project Manager",
+                    company="Example",
+                    description="Scanner",
+                    work_format="unknown",
+                    published_at=datetime(2026, 9, 21, 18, 30, tzinfo=timezone.utc),
+                    url="https://example.com/today",
+                    content_hash="today",
+                    archived=False,
+                ),
+                Vacancy(
+                    source="scanner",
+                    external_id="old",
+                    track="scanner_primary",
+                    title="Old Project Manager",
+                    company="Example",
+                    description="Scanner",
+                    work_format="unknown",
+                    published_at=datetime(2026, 9, 20, 18, 30, tzinfo=timezone.utc),
+                    url="https://example.com/old",
+                    content_hash="old",
+                    archived=False,
+                ),
+            ]
+        )
+
+    rows = repository.get_scanner_for_date(date(2026, 9, 21), timezone.utc)
+
+    assert [row.external_id for row in rows] == ["today"]

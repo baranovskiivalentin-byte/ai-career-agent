@@ -5,7 +5,9 @@ import httpx
 
 from hh_api import (
     HH_API_URL,
+    TRACK_QUERIES,
     HHClient,
+    hh_work_format,
     is_explicitly_remote,
     normalize_hh_vacancy,
     parse_datetime,
@@ -21,10 +23,31 @@ def test_remote_detected_from_new_work_format():
     assert is_explicitly_remote({"work_format": [{"id": "REMOTE", "name": "Из дома"}]})
 
 
-def test_hybrid_is_not_remote_without_explicit_remote_text():
-    assert not is_explicitly_remote(
-        {"schedule": {"id": "flexible", "name": "Гибрид"}, "description": "Офис 3 дня"}
-    )
+def test_hybrid_is_selected_without_being_mislabeled_remote():
+    item = {"work_format": [{"id": "HYBRID"}], "description": "Офис 3 дня"}
+    assert hh_work_format(item) == "hybrid"
+    assert not is_explicitly_remote(item)
+
+
+def test_on_site_is_not_mistaken_for_hybrid_methodology():
+    item = {
+        "work_format": [{"id": "ON_SITE"}],
+        "description": "Управление проектами: гибридные модели Agile и Waterfall",
+    }
+    assert hh_work_format(item) == "on_site"
+    assert hh_work_format({"description": item["description"]}) == "unknown"
+
+
+def test_hh_queries_cover_role_synonyms_and_word_order():
+    queries = {query.lower() for group in TRACK_QUERIES.values() for query in group}
+    assert {
+        "руководитель проекта",
+        "руководитель ит проекта",
+        "руководитель проекта ит",
+        "менеджер проекта",
+        "project manager",
+        "project it manager",
+    } <= queries
 
 
 def test_remote_detected_from_description():
@@ -44,6 +67,39 @@ def test_normalization_strips_html():
     assert result.description == "Управление командой"
     assert result.work_format == "remote"
     assert strip_html("a<br>b") == "a b"
+
+
+def test_normalization_preserves_hybrid_work_format():
+    item = {
+        "id": "124",
+        "name": "Менеджер ИТ-проекта",
+        "work_format": [{"id": "HYBRID"}],
+        "description": "Гибридная работа",
+    }
+    assert normalize_hh_vacancy(item, "senior_it").work_format == "hybrid"
+
+
+def test_fetch_recent_requests_remote_and_hybrid_titles():
+    settings = SimpleNamespace(
+        hh_user_agent="AI Career Agent tests",
+        hh_access_token=None,
+        hh_client_id=None,
+        hh_client_secret=None,
+    )
+    hh = HHClient(settings)
+    search_params = []
+
+    async def fake_request(_client, path, params=None):
+        if path == "/vacancies":
+            search_params.append(params)
+            return {"items": [], "pages": 1}
+        raise AssertionError(path)
+
+    hh._request = fake_request
+    assert asyncio.run(hh.fetch_recent(max_pages=1)) == []
+    assert len(search_params) == sum(map(len, TRACK_QUERIES.values()))
+    assert all(row["work_format"] == ["REMOTE", "HYBRID"] for row in search_params)
+    assert all(row["search_field"] == "name" for row in search_params)
 
 
 def test_parse_datetime_accepts_unix_seconds_and_milliseconds():

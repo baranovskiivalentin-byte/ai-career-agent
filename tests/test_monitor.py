@@ -9,6 +9,8 @@ from vacancy_manager import VacancyRepository
 
 
 class FakeRanker:
+    quota_exhausted = False
+
     async def score(self, vacancy):
         return {
             "track": vacancy.track,
@@ -157,3 +159,50 @@ def test_monitor_rescores_richer_duplicate(tmp_path):
 
     assert stats["updated"] == 1
     assert stats["scored"] == 1
+
+
+def test_monitor_rescores_recent_deterministic_vacancies(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'rescore.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    vacancy, _ = repository.upsert_candidate(
+        VacancyCandidate(
+            source="hh",
+            external_id="rescore-1",
+            track="senior_it",
+            title="Senior IT Project Manager",
+            company="Example",
+            description="Remote SAP delivery",
+            salary_from=350000,
+            salary_to=None,
+            currency="RUR",
+            work_format="remote",
+            location="Россия",
+            published_at=datetime.now(timezone.utc),
+            url="https://hh.ru/vacancy/rescore-1",
+            content_hash="rescore-hash",
+        )
+    )
+    repository.save_score(
+        vacancy.id,
+        {
+            "track": "senior_it",
+            "total": 35,
+            "role_score": 10,
+            "seniority_score": 5,
+            "domain_score": 5,
+            "experience_score": 5,
+            "salary_score": 5,
+            "freshness_score": 5,
+            "reasons": ["Предварительно"],
+            "risks": [],
+            "model": "deterministic",
+        },
+    )
+    monitor = VacancyMonitor.__new__(VacancyMonitor)
+    monitor.repository = repository
+    monitor.ranker = FakeRanker()
+
+    stats = asyncio.run(monitor.rescore_recent_fallbacks())
+
+    assert stats == {"candidates": 1, "rescored": 1, "errors": 0}

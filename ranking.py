@@ -45,6 +45,11 @@ ROLE_WORDS = {
         "chief of staff",
         "руководитель it-проект",
         "руководитель ит-проект",
+        "руководитель проекта",
+        "руководитель проектов",
+        "менеджер проекта",
+        "менеджер ит-проект",
+        "менеджер it-проект",
     ),
     "enterprise_epc": (
         "руководитель проектов",
@@ -187,7 +192,18 @@ class VacancyRanker:
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         self._quota_exhausted = False
 
-    async def score(self, vacancy: Vacancy) -> dict[str, Any]:
+    @property
+    def quota_exhausted(self) -> bool:
+        """Whether this running process has detected an exhausted API balance."""
+        return self._quota_exhausted
+
+    async def score(
+        self,
+        vacancy: Vacancy,
+        *,
+        model_override: str | None = None,
+        max_output_tokens: int | None = None,
+    ) -> dict[str, Any]:
         track: Track = (
             vacancy.track
             if vacancy.track in {"senior_it", "enterprise_epc"}
@@ -197,10 +213,18 @@ class VacancyRanker:
         if self._quota_exhausted:
             return baseline
         prompt = self._prompt(vacancy, track, baseline)
-        for model in dict.fromkeys(
-            [self.settings.scoring_model, self.settings.fallback_model]
-        ):
+        models = (
+            [model_override]
+            if model_override
+            else [self.settings.scoring_model, self.settings.fallback_model]
+        )
+        for model in dict.fromkeys(models):
             try:
+                response_limits = (
+                    {"max_output_tokens": max_output_tokens}
+                    if max_output_tokens is not None
+                    else {}
+                )
                 response = await self.client.responses.parse(
                     model=model,
                     input=[
@@ -218,6 +242,7 @@ class VacancyRanker:
                         {"role": "user", "content": prompt},
                     ],
                     text_format=AIAnalysis,
+                    **response_limits,
                 )
                 parsed = response.output_parsed
                 if parsed is None:
@@ -236,6 +261,9 @@ class VacancyRanker:
                 )
                 result["total"] = min(100, component_total)
                 result["model"] = model
+                usage = getattr(response, "usage", None)
+                result["input_tokens"] = getattr(usage, "input_tokens", 0) or 0
+                result["output_tokens"] = getattr(usage, "output_tokens", 0) or 0
                 return result
             except Exception as exc:  # noqa: BLE001 - scoring must always fall back
                 if _is_insufficient_quota(exc):
@@ -255,6 +283,7 @@ class VacancyRanker:
                 "target_salary_min",
                 "target_salary_max",
                 "target_roles",
+                "preferred_format",
                 "target_domains",
                 "experience_years",
                 "industries",

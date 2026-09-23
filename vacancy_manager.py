@@ -233,6 +233,15 @@ class VacancyRepository:
                     VacancyScore(vacancy_id=vacancy_id, track=score["track"], **values)
                 )
 
+    def get_score_model(self, vacancy_id: int, track: str) -> str | None:
+        with self.db.session() as session:
+            return session.scalar(
+                select(VacancyScore.model).where(
+                    VacancyScore.vacancy_id == vacancy_id,
+                    VacancyScore.track == track,
+                )
+            )
+
     def get_vacancy(self, vacancy_id: int) -> Vacancy | None:
         with self.db.session() as session:
             row = session.get(Vacancy, vacancy_id)
@@ -254,9 +263,18 @@ class VacancyRepository:
                 .join(VacancyScore, VacancyScore.vacancy_id == Vacancy.id)
                 .where(
                     Vacancy.archived.is_(False),
-                    Vacancy.work_format == "remote",
+                    Vacancy.work_format.in_(("remote", "hybrid")),
                     VacancyScore.total >= minimum_score,
-                    Vacancy.created_at >= since,
+                    # HH and public sources already provide the publication date.
+                    # A vacancy must not disappear from the digest merely because
+                    # it was first saved to our database more than three days ago.
+                    or_(
+                        Vacancy.published_at >= since,
+                        and_(
+                            Vacancy.published_at.is_(None),
+                            Vacancy.created_at >= since,
+                        ),
+                    ),
                 )
                 .order_by(desc(VacancyScore.total), desc(Vacancy.published_at))
             )
@@ -391,6 +409,40 @@ class VacancyRepository:
                 session.expunge(score)
                 result.append((vacancy, score))
             return result
+
+    def get_deterministic_for_rescore(
+        self, *, hours: int = 72, limit: int = 20
+    ) -> list[Vacancy]:
+        """Return a bounded batch of fresh fallback-scored vacancies.
+
+        This is used once after an OpenAI balance recovery.  The explicit limit
+        avoids an uncontrolled burst of paid requests after a deployment.
+        """
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        with self.db.session() as session:
+            rows = list(
+                session.scalars(
+                    select(Vacancy)
+                    .join(VacancyScore, VacancyScore.vacancy_id == Vacancy.id)
+                    .where(
+                        Vacancy.archived.is_(False),
+                        Vacancy.work_format.in_(("remote", "hybrid")),
+                        VacancyScore.model == "deterministic",
+                        or_(
+                            Vacancy.published_at >= since,
+                            and_(
+                                Vacancy.published_at.is_(None),
+                                Vacancy.created_at >= since,
+                            ),
+                        ),
+                    )
+                    .order_by(desc(Vacancy.published_at), desc(Vacancy.updated_at))
+                    .limit(limit)
+                )
+            )
+            for vacancy in rows:
+                session.expunge(vacancy)
+            return rows
 
     def record_action(
         self,

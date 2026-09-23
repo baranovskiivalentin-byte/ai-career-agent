@@ -24,7 +24,7 @@ from config import (
 )
 from dashboard_server import start_dashboard_server
 from database import Database
-from digest import send_digest
+from digest import DigestItem, card_keyboard, card_text, send_digest
 from gmail_source import GmailJobAlertsSource
 from habr_source import HabrCareerSource
 from monitor import VacancyMonitor
@@ -41,6 +41,7 @@ from vacancy_manager import (
     get_stats,
     save_vacancy,
 )
+from weekly_hh_backfill import CURSOR_NAME, run_weekly_hh_backfill
 
 logging.basicConfig(
     level=logging.INFO,
@@ -339,6 +340,65 @@ async def digest_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def rescore_after_balance_recovery_job(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """One bounded recovery pass after a deployment with restored API credits."""
+    data = context.application.bot_data
+    database: Database = data["database"]
+    cursor_name = "openai_balance_recovery_rescore_v1"
+    if database.get_cursor(cursor_name):
+        return
+    monitor: VacancyMonitor = data["monitor"]
+    stats = await monitor.rescore_recent_fallbacks(limit=20)
+    if not getattr(monitor.ranker, "quota_exhausted", False):
+        database.set_cursor(cursor_name, str(stats["rescored"]))
+
+
+async def weekly_hh_backfill_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    data = context.application.bot_data
+    monitor: VacancyMonitor = data["monitor"]
+    if not monitor._hh_api_configured():
+        LOGGER.warning("Недельная перепроверка HH пропущена: API не настроен")
+        return
+    database: Database = data["database"]
+    try:
+        state = await run_weekly_hh_backfill(
+            database,
+            data["repository"],
+            VacancyRanker(data["settings"], data["profile"]),
+            monitor.hh,
+        )
+    except Exception:
+        LOGGER.exception("Недельная перепроверка HH завершилась ошибкой")
+        return
+    if state.get("notified"):
+        return
+    chat_id = data["settings"].telegram_chat_id or database.get_cursor("digest_chat_id")
+    if not chat_id:
+        return
+    await context.application.bot.send_message(
+        chat_id=int(chat_id),
+        text=(
+            "🔎 Перепроверка HeadHunter за 7 дней: "
+            f"собрано {state['saved']}, AI-оценено {state['ai_scored']}. "
+            f"Ошибок: {state['errors']}. "
+            "Сильные совпадения отправляю ниже, остальные доступны по кнопке HH."
+        ),
+    )
+    rows = data["repository"].get_ranked(70, hours=168, sources={"hh"})
+    for vacancy, score in [row for row in rows if row[1].model == "gpt-4.1-mini"][:5]:
+        await context.application.bot.send_message(
+            chat_id=int(chat_id),
+            text=card_text(DigestItem(vacancy, score)),
+            parse_mode="HTML",
+            reply_markup=card_keyboard(vacancy),
+            disable_web_page_preview=True,
+        )
+    state["notified"] = True
+    database.set_cursor(CURSOR_NAME, json.dumps(state))
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     LOGGER.exception("Необработанная ошибка Telegram", exc_info=context.error)
 
@@ -351,22 +411,24 @@ async def post_init(application: Application) -> None:
         settings.telegram_web_enabled
         and not database.get_cursor(TELEGRAM_WEB_EXPANSION_BACKFILL_CURSOR)
     )
+    weekly_state = json.loads(database.get_cursor(CURSOR_NAME) or "{}")
+    weekly_pending = not weekly_state.get("done")
     application.job_queue.run_repeating(
         collect_job,
         interval=settings.hh_poll_interval_seconds,
-        first=settings.hh_poll_interval_seconds if backfill_pending else 5,
+        first=settings.hh_poll_interval_seconds if backfill_pending or weekly_pending else 5,
         name="vacancy-monitor",
     )
     application.job_queue.run_repeating(
         scanner_scoring_job,
         interval=300,
-        first=15,
+        first=settings.hh_poll_interval_seconds if weekly_pending else 15,
         name="scanner-scoring",
     )
     if backfill_pending:
         application.job_queue.run_once(
             telegram_web_expansion_backfill_job,
-            when=1,
+            when=settings.hh_poll_interval_seconds if weekly_pending else 1,
             name="telegram-web-expansion-backfill",
         )
     application.job_queue.run_daily(
@@ -378,6 +440,12 @@ async def post_init(application: Application) -> None:
         ),
         name="daily-digest",
     )
+    if weekly_pending:
+        application.job_queue.run_once(
+            weekly_hh_backfill_job,
+            when=15,
+            name="hh-weekly-recheck",
+        )
     telegram_source: TelegramChannelSource | None = data.get("telegram_source")
     if telegram_source and settings.telegram_sources_enabled:
         await telegram_source.start(data["monitor"].ingest_one)

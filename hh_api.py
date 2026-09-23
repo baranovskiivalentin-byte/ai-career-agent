@@ -19,16 +19,28 @@ HH_API_URL = "https://api.hh.ru"
 
 TRACK_QUERIES: dict[str, list[str]] = {
     "senior_it": [
+        "Руководитель проекта",
+        "Руководитель проектов",
+        "Руководитель ИТ проекта",
+        "Руководитель проекта ИТ",
+        "Руководитель IT проекта",
+        "Руководитель проекта IT",
+        "Менеджер проекта",
+        "Менеджер ИТ проекта",
+        "Менеджер проекта ИТ",
+        "Project Manager",
+        "IT Project Manager",
+        "Project IT Manager",
         "Senior IT Project Manager",
         "Delivery Manager",
-        "Program Manager ERP SAP",
+        "Program Manager",
         "AI Project Manager",
     ],
     "enterprise_epc": [
-        "Руководитель проектов цифровая трансформация",
-        "Project Manager EPC",
-        "Руководитель проектов SAP ERP",
-        "Program Manager enterprise",
+        "Руководитель проектов по внедрению",
+        "Руководитель проектов цифровой трансформации",
+        "Руководитель проекта ERP",
+        "Project Manager ERP",
     ],
 }
 
@@ -91,10 +103,14 @@ def _format_ids(item: dict[str, Any]) -> set[str]:
     return result
 
 
-def is_explicitly_remote(item: dict[str, Any]) -> bool:
+def hh_work_format(item: dict[str, Any]) -> str:
     ids = _format_ids(item)
+    if "hybrid" in ids or "гибрид" in ids:
+        return "hybrid"
     if any(value in {"remote", "fully_remote", "remote_work"} for value in ids):
-        return True
+        return "remote"
+    if "on_site" in ids or "office" in ids:
+        return "on_site"
     searchable = " ".join(
         [
             str((item.get("schedule") or {}).get("name", "")),
@@ -103,6 +119,16 @@ def is_explicitly_remote(item: dict[str, Any]) -> bool:
             str((item.get("snippet") or {}).get("responsibility", "")),
         ]
     ).lower()
+    hybrid_words = (
+        "гибридный формат",
+        "гибридном формате",
+        "гибридная работа",
+        "гибридный график",
+        "hybrid work",
+        "hybrid schedule",
+    )
+    if any(word in searchable for word in hybrid_words):
+        return "hybrid"
     remote_words = (
         "удаленная работа",
         "удалённая работа",
@@ -111,7 +137,14 @@ def is_explicitly_remote(item: dict[str, Any]) -> bool:
         "fully remote",
         "remote work",
     )
-    return any(word in searchable for word in remote_words)
+    if any(word in searchable for word in remote_words):
+        return "remote"
+    return "unknown"
+
+
+def is_explicitly_remote(item: dict[str, Any]) -> bool:
+    """Backward-compatible predicate for callers that need remote-only roles."""
+    return hh_work_format(item) == "remote"
 
 
 def normalize_hh_vacancy(item: dict[str, Any], track: str) -> VacancyCandidate:
@@ -139,7 +172,7 @@ def normalize_hh_vacancy(item: dict[str, Any], track: str) -> VacancyCandidate:
         salary_from=salary.get("from"),
         salary_to=salary.get("to"),
         currency=salary.get("currency"),
-        work_format="remote",
+        work_format=hh_work_format(item),
         location=(item.get("area") or {}).get("name"),
         published_at=parse_datetime(item.get("published_at")),
         url=url,
@@ -160,6 +193,7 @@ class HHClient:
             self.headers["Authorization"] = f"Bearer {settings.hh_access_token}"
         self._access_token = settings.hh_access_token
         self._token_expires_at = float("inf") if settings.hh_access_token else 0.0
+        self.last_fetch_errors = 0
 
     async def _ensure_token(self, client: httpx.AsyncClient) -> None:
         if self._access_token and time.monotonic() < self._token_expires_at - 60:
@@ -207,8 +241,11 @@ class HHClient:
                     await asyncio.sleep(2**attempt)
         raise RuntimeError(f"HH API недоступен: {last_error}")
 
-    async def fetch_recent(self, max_pages: int = 2) -> list[VacancyCandidate]:
+    async def fetch_recent(
+        self, max_pages: int = 2, *, period_days: int = 1
+    ) -> list[VacancyCandidate]:
         candidates: dict[str, VacancyCandidate] = {}
+        self.last_fetch_errors = 0
         async with httpx.AsyncClient(
             base_url=HH_API_URL,
             headers=self.headers,
@@ -217,18 +254,24 @@ class HHClient:
             for track, queries in TRACK_QUERIES.items():
                 for query in queries:
                     for page in range(max_pages):
-                        data = await self._request(
-                            client,
-                            "/vacancies",
-                            {
-                                "text": query,
-                                "work_format": "REMOTE",
-                                "period": 1,
-                                "order_by": "publication_time",
-                                "per_page": 50,
-                                "page": page,
-                            },
-                        )
+                        try:
+                            data = await self._request(
+                                client,
+                                "/vacancies",
+                                {
+                                    "text": query,
+                                    "work_format": ["REMOTE", "HYBRID"],
+                                    "search_field": "name",
+                                    "period": period_days,
+                                    "order_by": "publication_time",
+                                    "per_page": 50,
+                                    "page": page,
+                                },
+                            )
+                        except RuntimeError:
+                            self.last_fetch_errors += 1
+                            LOGGER.exception("Поиск HH прервался: %s, page=%s", query, page)
+                            break
                         items = data.get("items", [])
                         for short_item in items:
                             vacancy_id = str(short_item.get("id", ""))
@@ -239,13 +282,14 @@ class HHClient:
                                     client, f"/vacancies/{vacancy_id}"
                                 )
                             except RuntimeError:
+                                self.last_fetch_errors += 1
                                 LOGGER.exception(
                                     "Не удалось получить вакансию HH %s", vacancy_id
                                 )
                                 continue
-                            if full_item.get("archived") or not is_explicitly_remote(
+                            if full_item.get("archived") or hh_work_format(
                                 full_item
-                            ):
+                            ) not in {"remote", "hybrid"}:
                                 continue
                             candidates[vacancy_id] = normalize_hh_vacancy(
                                 full_item, track

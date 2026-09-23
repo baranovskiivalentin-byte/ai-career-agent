@@ -20,7 +20,8 @@
   ],
 
   "preferred_format": [
-    "remote"
+    "remote",
+    "hybrid"
   ],
 
   "digest": {

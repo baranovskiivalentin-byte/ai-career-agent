@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from config import Settings
 from database import Vacancy, VacancyScore
 from vacancy_manager import VacancyRepository
 
+LOGGER = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class DigestItem:
@@ -71,12 +73,13 @@ def card_text(item: DigestItem) -> str:
         "\n".join(f"• {html.escape(value)}" for value in score.risks[:3])
         or "• Критичных рисков не выявлено"
     )
+    format_label = "Гибрид" if vacancy.work_format == "hybrid" else "Удалённо"
     return (
         f"<b>{html.escape(vacancy.title)}</b>\n"
         f"{html.escape(vacancy.company)}\n"
         f"🎯 {score.total}/100 · {track_name}\n"
         f"💰 {html.escape(salary_text(vacancy))}\n"
-        f"🏠 Удалённо · источник: {html.escape(vacancy.source)}\n\n"
+        f"🏠 {format_label} · источник: {html.escape(vacancy.source)}\n\n"
         f"<b>Почему подходит</b>\n{reasons}\n\n"
         f"<b>Риски</b>\n{risks}"
     )
@@ -104,6 +107,13 @@ def card_keyboard(vacancy: Vacancy) -> InlineKeyboardMarkup:
     )
 
 
+def select_top_items(
+    rows: list[tuple[Vacancy, VacancyScore]], *, limit: int = 5
+) -> list[DigestItem]:
+    """Keep the database score order for a compact fallback digest."""
+    return [DigestItem(vacancy=vacancy, score=score) for vacancy, score in rows[:limit]]
+
+
 async def send_digest(
     application: Application,
     repository: VacancyRepository,
@@ -117,12 +127,35 @@ async def send_digest(
     if not force and repository.digest_exists(today, chat_id):
         return 0
     minimum_score = 0 if force else settings.scoring_threshold
-    rows = (
-        repository.get_ranked(minimum_score, sources=sources)
-        if sources
-        else repository.get_ranked(minimum_score)
-    )
+    def ranked(score: int):
+        return (
+            repository.get_ranked(score, sources=sources)
+            if sources
+            else repository.get_ranked(score)
+        )
+
+    rows = ranked(minimum_score)
     items = select_digest_items(rows)
+    delivery_mode = "manual" if force else "qualified"
+    if not force and not items:
+        fallback_threshold = getattr(settings, "scoring_fallback_threshold", 50)
+        fallback_rows = ranked(fallback_threshold)
+        if fallback_rows:
+            items = select_top_items(fallback_rows, limit=5)
+            delivery_mode = "preliminary"
+        else:
+            # Collection has succeeded, but the current scores are low.  A short
+            # top list is more useful than a misleading empty daily notification.
+            items = select_top_items(ranked(0), limit=5)
+            delivery_mode = "review"
+    LOGGER.info(
+        "Дайджест: mode=%s threshold=%s qualifying=%s delivered=%s force=%s",
+        delivery_mode,
+        minimum_score,
+        len(rows),
+        len(items),
+        force,
+    )
     if settings.shadow_mode and not force:
         repository.save_digest(
             today,
@@ -146,7 +179,12 @@ async def send_digest(
         return 0
     await application.bot.send_message(
         chat_id=chat_id,
-        text=f"Подборка на {today:%d.%m.%Y}: {len(items)} релевантных вакансий",
+        text=_digest_heading(
+            today,
+            len(items),
+            delivery_mode=delivery_mode,
+            threshold=settings.scoring_threshold,
+        ),
     )
     for item in items:
         await application.bot.send_message(
@@ -165,3 +203,24 @@ async def send_digest(
             shadow=False,
         )
     return len(items)
+
+
+def _digest_heading(
+    today,
+    count: int,
+    *,
+    delivery_mode: str,
+    threshold: int,
+) -> str:
+    if delivery_mode == "preliminary":
+        return (
+            f"Предварительная подборка на {today:%d.%m.%Y}: {count} вакансий\n"
+            f"Ни одна пока не достигла {threshold}/100 — отправляю лучшие варианты "
+            "для твоей проверки."
+        )
+    if delivery_mode == "review":
+        return (
+            f"Подборка для ручной проверки на {today:%d.%m.%Y}: {count} вакансий\n"
+            "Сильных совпадений пока нет, но эти варианты лучше пустого дайджеста."
+        )
+    return f"Подборка на {today:%d.%m.%Y}: {count} релевантных вакансий"

@@ -70,6 +70,7 @@ class Settings:
     timezone: ZoneInfo
     shadow_mode: bool
     scoring_threshold: int
+    scoring_fallback_threshold: int
     scoring_model: str
     writing_model: str
     fallback_model: str
@@ -151,6 +152,7 @@ class Settings:
             timezone=ZoneInfo(os.getenv("TIMEZONE", "Europe/Moscow")),
             shadow_mode=_bool_env("SHADOW_MODE", True),
             scoring_threshold=_int_env("SCORING_THRESHOLD", 70),
+            scoring_fallback_threshold=_int_env("SCORING_FALLBACK_THRESHOLD", 50),
             scoring_model=os.getenv("OPENAI_SCORING_MODEL", "gpt-5.6-luna"),
             writing_model=os.getenv("OPENAI_WRITING_MODEL", "gpt-5.6-terra"),
             fallback_model=os.getenv("OPENAI_FALLBACK_MODEL", "gpt-4.1-mini"),
