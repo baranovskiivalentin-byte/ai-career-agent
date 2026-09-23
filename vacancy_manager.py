@@ -281,12 +281,10 @@ class VacancyRepository:
             if sources:
                 query = query.where(Vacancy.source.in_(sources))
             rows = session.execute(query).all()
-            result = []
-            for vacancy, score in rows:
-                session.expunge(vacancy)
-                session.expunge(score)
-                result.append((vacancy, score))
-            return result
+            # The same Vacancy can have a score for each track. Expunging it
+            # once per joined row raises InvalidRequestError on the second row.
+            session.expunge_all()
+            return [(vacancy, score) for vacancy, score in rows]
 
     def get_scanner_for_date(self, target_date: date, tz) -> list[Vacancy]:
         """Return active scanner vacancies first seen on a local calendar date."""

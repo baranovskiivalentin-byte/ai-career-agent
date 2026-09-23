@@ -179,6 +179,38 @@ def test_ranked_can_filter_headhunter_sources(tmp_path):
     assert [vacancy.source for vacancy, _ in rows] == ["hh"]
 
 
+def test_ranked_handles_two_track_scores_for_same_vacancy(tmp_path):
+    db = Database(f"sqlite:///{tmp_path / 'two-tracks.db'}")
+    db.create_schema()
+    repository = VacancyRepository(db)
+    row = candidate(external_id="hh-42", url="https://hh.ru/vacancy/42")
+    row.source = "hh"
+    vacancy, _ = repository.upsert_candidate(row)
+    for track in ("senior_it", "enterprise_epc"):
+        repository.save_score(
+            vacancy.id,
+            {
+                "track": track,
+                "total": 80,
+                "role_score": 30,
+                "seniority_score": 15,
+                "domain_score": 10,
+                "experience_score": 10,
+                "salary_score": 10,
+                "freshness_score": 5,
+                "reasons": ["Подходит"],
+                "risks": [],
+                "model": "test",
+            },
+        )
+
+    rows = repository.get_ranked(0, sources={"hh"})
+
+    assert len(rows) == 2
+    assert {score.track for _, score in rows} == {"senior_it", "enterprise_epc"}
+    assert all(vacancy_row.id == vacancy.id for vacancy_row, _ in rows)
+
+
 def test_scanner_query_uses_first_seen_calendar_date(tmp_path):
     db = Database(f"sqlite:///{tmp_path / 'scanner.db'}")
     db.create_schema()
